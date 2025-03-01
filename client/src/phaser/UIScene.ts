@@ -17,6 +17,7 @@ export class UIScene extends Phaser.Scene {
     }
 
     create() {
+        
         this.uiContainer = this.add.container(0, 0);
         this.uiContainer.setScrollFactor(0);
         this.uiContainer.setDepth(2000); // Ensure UI is above game elements

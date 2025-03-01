@@ -27,8 +27,11 @@ export class GameScene extends Phaser.Scene {
     private uiContainer!: Phaser.GameObjects.Container;
 
     preload() {
-        this.load.tilemapTiledJSON('map', '/assets/exports/mmorpg.json');
-        this.load.image('tileset', '/assets/tiles/tileset.png');
+
+        this.load.image('tileset', 'assets/tiles/tileset.png');
+        this.load.tilemapTiledJSON('map', 'assets/exports/mmorpg.json');
+
+
         this.load.image('enemy-easy', '/assets/enemy-easy.png');
         this.load.image('enemy-medium', '/assets/enemy-medium.png');
         this.load.image('enemy-hard', '/assets/enemy-hard.png');
@@ -62,35 +65,7 @@ export class GameScene extends Phaser.Scene {
             SPACE: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
         };
 
-        const map = this.make.tilemap({ key: 'map' });
-        if (!map) {
-            console.error('Tilemap failed to load');
-            return;
-        }
-        console.log('Tilemap loaded successfully');
-
-        const tileset = map.addTilesetImage('tileset', 'tileset', 32, 32);
-        if (!tileset) {
-            console.error('Tileset not found or invalid in map');
-            return;
-        }
-        console.log('Tileset added successfully, tile width:', tileset.tileWidth, 'tile height:', tileset.tileHeight);
-
-        console.log('Available layers:', map.layers.map(l => l.name));
-        const layer = map.createLayer('ground', tileset, 0, 0);
-        if (layer) {
-            layer.setScale(1);
-            layer.setDepth(0);
-            layer.setVisible(true); // Ensure layer is visible on first load
-            console.log('Layer "ground" created successfully at depth 0');
-        } else {
-            console.error('Layer "ground" creation failed');
-            return;
-        }
-
-        this.cameras.main.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
-        // Preserve existing camera setup—no zoom or position changes as per your request
-        console.log('Camera set up with bounds:', map.widthInPixels, map.heightInPixels);
+        this.createTilemap();
 
         this.cursors = this.input.keyboard.createCursorKeys();
 
@@ -118,7 +93,8 @@ export class GameScene extends Phaser.Scene {
 
         // Check initial state and connect WebSocket to show world on first load
         const initialState = this.registry.get('initialState');
-        if (initialState === 'worldOnly') {
+        let isBlock = true;
+        if (initialState === 'worldOnly' && !isBlock) {
             // Show the world—connect WebSocket to receive existing player updates
             this.ws = new WebSocket('ws://localhost:8080/ws');
             this.ws.onopen = () => {
@@ -221,9 +197,50 @@ export class GameScene extends Phaser.Scene {
         // start the UI scene
         this.scene.launch('UIScene');
 
-   
         // Listen for selectGotchi event
         this.registry.get('game').events.on('selectGotchi', this.onGotchiSelected, this);
+    }
+
+    createTilemap() {
+        const map = this.make.tilemap({ key: 'map' });
+        if (!map) {
+            console.error('Tilemap failed to load');
+            return;
+        }
+        console.log('Tilemap loaded successfully');
+
+        const tileset = map.addTilesetImage('tileset', 'tileset', 32, 32);
+        if (!tileset) {
+            console.error('Tileset not found or invalid in map');
+            return;
+        }
+        console.log('Tileset added successfully, tile width:', tileset.tileWidth, 'tile height:', tileset.tileHeight);
+
+        console.log('Available layers:', map.layers.map(l => l.name));
+        const layer = map.createLayer('ground', tileset, 0, 0);
+        if (layer) {
+            layer.setScale(1);
+            layer.setDepth(0);
+            layer.setVisible(true); // Ensure layer is visible on first load
+            console.log('Layer "ground" created successfully at depth 0');
+        } else {
+            console.error('Layer "ground" creation failed');
+            return;
+        }
+
+        this.cameras.main.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
+
+        // this.cameras.main.setScroll(560*32/2, 350*32/2);
+        // rather than setting the cameras scroll we just make it do a start follow
+        // of a plain rectangle at the world center
+        var initialCameraFollow = this.add.rectangle(560*32/2, 350*32/2, 20, 20, 0xff0000)
+            .setOrigin(0.5, 0.5)
+            .setAlpha(0)
+
+        this.cameras.main.startFollow(initialCameraFollow);
+
+        // Preserve existing camera setup—no zoom or position changes as per your request
+        console.log('Camera set up with bounds:', map.widthInPixels, map.heightInPixels, " and x: ", this.cameras.main.x, ", y: ", this.cameras.main.y);
     }
 
     onGotchiSelected(gotchiData: any) {
@@ -477,6 +494,16 @@ export class GameScene extends Phaser.Scene {
         // Scale UI properly, preserving Phaser game window styling
         this.uiContainer.setPosition(-(GAME_WIDTH - newWidth) * 0.5, -(GAME_HEIGHT - newHeight) * 0.5);
 
+        // Center the Phaser canvas manually
+        const canvas = this.game.canvas;
+        canvas.style.position = 'absolute';
+        canvas.style.left = '50%';
+        // canvas.style.top = '50%';
+        // canvas.style.transform = 'translate(-50%, 0%)';
+        canvas.style.top = '50%';
+        canvas.style.transform = 'translate(-50%, -50%)';
+
         console.log('Resized game to width:', newWidth, 'height:', newHeight);
+
     }
 }
