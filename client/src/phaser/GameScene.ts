@@ -245,7 +245,9 @@ export class GameScene extends Phaser.Scene {
 
     onGotchiSelected(gotchiData: any) {
         console.log('Gotchi Selected:', gotchiData);
-        // Handle the selected Gotchi (e.g., update display)
+        
+        // Grok 3: Send a 'join' message to the server and spawn our player
+        // to be used by this local client (and for other clients to see)
     }
 
     shutdown() {
@@ -503,7 +505,7 @@ export class GameScene extends Phaser.Scene {
         canvas.style.top = '50%';
         canvas.style.transform = 'translate(-50%, -50%)';
 
-        console.log('Resized game to width:', newWidth, 'height:', newHeight);
+        // console.log('Resized game to width:', newWidth, 'height:', newHeight);
 
     }
 }
