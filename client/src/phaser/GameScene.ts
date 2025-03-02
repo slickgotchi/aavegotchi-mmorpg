@@ -1,11 +1,17 @@
 import Phaser from 'phaser';
-import { fetchGotchiSVGs } from './FetchGotchis'; // Adjusted import to match existing usage
+import { fetchGotchiSVGs, Aavegotchi } from './FetchGotchis'; // Adjusted import to include Aavegotchi type
 
 const GAME_WIDTH = 1920;
 const GAME_HEIGHT = 1200;
 
+export interface Player {
+    sprite: Phaser.GameObjects.Sprite;
+    gotchiId: number;
+    isAssignedSVG: boolean;
+}
+
 export class GameScene extends Phaser.Scene {
-    private players: { [id: string]: Phaser.GameObjects.Sprite } = {};
+    private players: { [id: string]: Player } = {};
     private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
     private ws!: WebSocket;
     private keys!: { W: Phaser.Input.Keyboard.Key; A: Phaser.Input.Keyboard.Key; S: Phaser.Input.Keyboard.Key; D: Phaser.Input.Keyboard.Key; SPACE: Phaser.Input.Keyboard.Key };
@@ -21,31 +27,18 @@ export class GameScene extends Phaser.Scene {
     private isConnected = false;
     private keyState = { W: false, A: false, S: false, D: false, SPACE: false };
     private localPlayerID!: string;
-    private pendingPlayers: { id: string, x: number, y: number, gotchiID: string }[] = [];
+    private followedPlayerID!: string;
 
     // All game UI elements (not including connect/select UI) are added to this, which controls scroll(0), depth, and scaling
     private uiContainer!: Phaser.GameObjects.Container;
 
     preload() {
-
         this.load.image('tileset', 'assets/tiles/tileset.png');
         this.load.tilemapTiledJSON('map', 'assets/exports/mmorpg.json');
-
-
         this.load.image('enemy-easy', '/assets/enemy-easy.png');
         this.load.image('enemy-medium', '/assets/enemy-medium.png');
         this.load.image('enemy-hard', '/assets/enemy-hard.png');
         this.load.image('gotchi_placeholder', '/assets/gotchi_placeholder.png');
-
-        const gotchi = this.registry.get('selectedGotchi');
-        if (gotchi) {
-            const svgDataUrl = `data:image/svg+xml;base64,${btoa(gotchi.svgs.front)}`;
-            this.load.image(`gotchi-${gotchi.id}-front`, svgDataUrl);
-            console.log('Preloaded local Gotchi SVG as image for ID:', gotchi.id);
-        } else {
-            console.log('No selected Gotchi found in registry—initializing world only');
-            // World still loads, no error—handles initial state
-        }
     }
 
     create() {
@@ -91,110 +84,62 @@ export class GameScene extends Phaser.Scene {
             this.textPool.push(text);
         }
 
-        // Check initial state and connect WebSocket to show world on first load
-        const initialState = this.registry.get('initialState');
-        let isBlock = true;
-        if (initialState === 'worldOnly' && !isBlock) {
-            // Show the world—connect WebSocket to receive existing player updates
-            this.ws = new WebSocket('ws://localhost:8080/ws');
-            this.ws.onopen = () => {
-                console.log('Connected to server in world-only mode');
-                this.isConnected = true;
-                // Don’t send input—only listen for updates
-                this.ws.onmessage = (e) => {
-                    let msg;
-                    try {
-                        msg = JSON.parse(e.data);
-                    } catch (err) {
-                        console.error('Failed to parse message:', err, 'Data:', e.data);
-                        return;
-                    }
-                    let data = msg.data;
-                    if (typeof data === 'string') data = JSON.parse(data);
-                    switch (msg.type) {
-                        case "playerUpdates":
-                            const updates = data.updates || []; // Default to empty array if updates is null/undefined
-                            if (Array.isArray(updates)) {
-                                this.handlePlayerUpdates(updates); // Handle existing player updates
+        // Always connect WebSocket to show the world and existing players, even before spawning
+        this.ws = new WebSocket('ws://localhost:8080/ws');
+        this.ws.onopen = () => {
+            console.log('Connected to server');
+            this.isConnected = true;
+
+            // listen for updates
+            this.ws.onmessage = (e) => {
+                let msg;
+                try {
+                    msg = JSON.parse(e.data);
+                } catch (err) {
+                    console.error('Failed to parse message:', err, 'Data:', e.data);
+                    return;
+                }
+                let data = msg.data;
+                if (typeof data === 'string') data = JSON.parse(data);
+                switch (msg.type) {
+                    case "welcome":
+                        this.localPlayerID = msg.data.id;
+                        console.log("Local Player ID: ", this.localPlayerID);
+                        this.followedPlayerID = "";
+                        break;
+                    case "playerUpdates":
+                        if (data){
+                            if (Array.isArray(data)) {
+                                data.forEach(update => {
+                                    this.addOrUpdatePlayer(update);
+                                });
                             } else {
-                                console.error('PlayerUpdates updates is not an array:', updates);
+                                console.error('PlayerUpdates updates is not an array:', data);
                             }
-                            break;
-                        case "newPlayer":
-                            this.addPlayer(data);
-                            break;
-                        case "playerDisconnected":
-                            this.removePlayer(data.id);
-                            break;
-                    }
-                };
-                this.ws.onerror = (e) => console.error('WebSocket error:', e);
-                this.ws.onclose = () => {
-                    console.log('WebSocket closed in world-only mode');
-                    this.isConnected = false;
-                };
+                        }
+                        break;
+                    case "playerDisconnected":
+                        this.removePlayer(data.id);
+                        break;
+                    case "enemyUpdates":
+                        this.handleEnemyUpdates(data);
+                        break;
+                    case "combat":
+                        this.handleCombat(data);
+                        break;
+                }
             };
-        } else if (initialState === 'spawnPlayer') {
-            // Spawn player after selection
-            const gotchi = this.registry.get('selectedGotchi');
-            if (gotchi) {
-                this.ws = new WebSocket('ws://localhost:8080/ws');
-                this.ws.onopen = () => {
-                    console.log('Connected to server for player spawn');
-                    this.isConnected = true;
-                    this.ws.send(JSON.stringify({ type: 'join', data: { gotchiID: gotchi.id } }));
-                };
-                this.ws.onmessage = (e) => {
-                    let msg;
-                    try {
-                        msg = JSON.parse(e.data);
-                    } catch (err) {
-                        console.error('Failed to parse message:', err, 'Data:', e.data);
-                        return;
-                    }
-                    let data = msg.data;
-                    if (typeof data === 'string') data = JSON.parse(data);
-                    switch (msg.type) {
-                        case "init":
-                            this.handleInit(data);
-                            break;
-                        case "newPlayer":
-                            this.addPlayer(data);
-                            break;
-                        case "playerDisconnected":
-                            this.removePlayer(data.id);
-                            break;
-                        case "stats":
-                            this.handleStats(data);
-                            break;
-                        case "playerUpdates":
-                            const updates = data.updates || []; // Default to empty array if updates is null/undefined
-                            if (Array.isArray(updates)) {
-                                this.handlePlayerUpdates(updates);
-                            } else {
-                                console.error('PlayerUpdates updates is not an array:', updates);
-                            }
-                            break;
-                        case "enemyUpdates":
-                            this.handleEnemyUpdates(data);
-                            break;
-                        case "combat":
-                            this.handleCombat(data);
-                            break;
-                    }
-                };
-                this.ws.onerror = (e) => console.error('WebSocket error:', e);
-                this.ws.onclose = () => {
-                    console.log('WebSocket closed after player spawn');
-                    this.isConnected = false;
-                };
-            }
-        }
+            this.ws.onerror = (e) => console.error('WebSocket error:', e);
+            this.ws.onclose = () => {
+                console.log('WebSocket closed in world-only mode');
+                this.isConnected = false;
+            };
+        };
 
         this.resizeGame();
         window.addEventListener('resize', () => this.resizeGame());
 
-        // start the UI scene
+        // Start the UI scene
         this.scene.launch('UIScene');
 
         // Listen for selectGotchi event
@@ -230,92 +175,101 @@ export class GameScene extends Phaser.Scene {
 
         this.cameras.main.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
 
-        // this.cameras.main.setScroll(560*32/2, 350*32/2);
-        // rather than setting the cameras scroll we just make it do a start follow
-        // of a plain rectangle at the world center
-        var initialCameraFollow = this.add.rectangle(560*32/2, 350*32/2, 20, 20, 0xff0000)
+        // Use a transparent rectangle to follow the camera, centering on (560*32/2, 350*32/2)
+        const initialCameraFollow = this.add.rectangle(560 * 32 / 2, 350 * 32 / 2, 20, 20, 0xff0000)
             .setOrigin(0.5, 0.5)
-            .setAlpha(0)
-
+            .setAlpha(0); // Invisible
         this.cameras.main.startFollow(initialCameraFollow);
 
-        // Preserve existing camera setup—no zoom or position changes as per your request
-        console.log('Camera set up with bounds:', map.widthInPixels, map.heightInPixels, " and x: ", this.cameras.main.x, ", y: ", this.cameras.main.y);
+        console.log('Camera set up with bounds:', map.widthInPixels, map.heightInPixels, ' and x: ', this.cameras.main.x, ', y: ', this.cameras.main.y);
     }
 
-    onGotchiSelected(gotchiData: any) {
-        console.log('Gotchi Selected:', gotchiData);
-        
-        // Grok 3: Send a 'join' message to the server and spawn our player
-        // to be used by this local client (and for other clients to see)
+    onGotchiSelected(gotchi: Aavegotchi) {
+        console.log('Gotchi Selected in GameScene:', gotchi);
+        // Update registry with the selected Gotchi
+        this.registry.set('selectedGotchi', gotchi);
+        // Set initial state to spawn player
+        this.registry.set('initialState', 'spawnPlayer');
+        // Send join message to server to spawn player
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            console.log("Send: join - ", { gotchiId: gotchi.id });
+            this.ws.send(JSON.stringify({ type: 'join', data: { gotchiId: gotchi.id } }));
+        }
     }
 
     shutdown() {
-        // Ensure we remove the listener when the scene is destroyed
-        const uiScene = this.scene.get('UIScene') as Phaser.Scene;
-        uiScene.events.off('selectGotchi', this.onGotchiSelected, this);
+        // Remove the listener when the scene is destroyed to prevent memory leaks
+        this.registry.get('game').events.off('selectGotchi', this.onGotchiSelected, this);
+        console.log('GameScene shutting down, removed selectGotchi listener');
     }
 
-    async handleInit(data: any) {
-        const localPlayer = data.player;
-        this.localPlayerID = localPlayer.id;
-        this.players[localPlayer.id] = this.add.sprite(localPlayer.x, localPlayer.y, `gotchi-${this.registry.get('selectedGotchi').id}-front`);
-        this.players[localPlayer.id].setDepth(1);
-        this.players[localPlayer.id].name = localPlayer.id;
-        this.players[localPlayer.id].setScale(0.5); // Ensure 64x64 size
-        this.cameras.main.startFollow(this.players[localPlayer.id], true);
-        console.log(`Initialized local player ${localPlayer.id} at (${localPlayer.x}, ${localPlayer.y})`);
+    addOrUpdatePlayer(data: any) {
+        // console.log("addOrUpdatePlayer: ", data);
+        // player does not exist - add
+        if (!this.players[data.id]) {
+            var newPlayerSprite = this.add.sprite(data.x, data.y, 'gotchi_placeholder')
+                .setDepth(1)
+                .setScale(1) // Ensure 64x64 size
+                .setName(data.id);
 
-        if (data.existingPlayers) {
-            data.existingPlayers.forEach((p: any) => {
-                this.pendingPlayers.push({ id: p.id, x: p.x, y: p.y, gotchiID: p.gotchiID });
-            });
+            this.players[data.id] = {
+                sprite: newPlayerSprite,
+                gotchiId: data.gotchiId,
+                isAssignedSVG: false,
+            } 
+
+            console.log(`Added placeholder player ${data.id} at (${data.x}, ${data.y})`);
+        } 
+        // player exists - move
+        else {
+            this.players[data.id].sprite.setPosition(data.x, data.y);
         }
-        this.loadPendingPlayers();
 
-        const view = this.cameras.main.worldView;
-        for (const id in data.enemies) {
-            const e = data.enemies[id];
-            if (this.isInView(e.x, e.y, view)) {
-                this.addEnemy(id, e);
+        // player with GotchiID but no svg yet
+        if (!this.players[data.id].isAssignedSVG && data.gotchiId !== 0) {
+            this.players[data.id].gotchiId = data.gotchiId;
+            this.players[data.id].isAssignedSVG = true;
+            this.loadGotchiSVG(data.gotchiId, data.id, data.x, data.y);
+        }
+
+        // local player
+        if (data.id === this.localPlayerID) {
+            if (this.followedPlayerID !== data.id) {
+                this.followedPlayerID = data.id;
+                console.log("follow player at position: ", this.players[data.id].sprite.x, this.players[data.id].sprite.y);
+                this.cameras.main.startFollow(this.players[data.id].sprite, true);
             }
         }
-        this.stats = data.player;
-        this.updateBars();
     }
 
-    addPlayer(data: any) {
-        if (!this.players[data.id]) {
-            this.pendingPlayers.push({ id: data.id, x: data.x, y: data.y, gotchiID: data.gotchiID });
-            this.loadPendingPlayers();
-        }
-    }
-
-    async loadPendingPlayers() {
-        const playersToLoad = [...this.pendingPlayers];
-        this.pendingPlayers = [];
-        for (const p of playersToLoad) {
-            const svgs = await fetchGotchiSVGs(p.gotchiID);
-            const svgDataUrl = `data:image/svg+xml;base64,${btoa(svgs.front)}`; // Use fetchGotchiSVGs directly, assuming it returns cleaned SVG
-            this.load.image(`gotchi-${p.id}-front`, svgDataUrl);
-        }
-        this.load.once('complete', () => {
-            playersToLoad.forEach(p => {
-                if (!this.players[p.id]) {
-                    this.players[p.id] = this.add.sprite(p.x, p.y, `gotchi-${p.id}-front`);
-                    this.players[p.id].setDepth(1);
-                    this.players[p.id].name = p.id;
-                    this.players[p.id].setScale(0.5); // Ensure 64x64 size
-                    console.log(`Initialized player ${p.id} at (${p.x}, ${p.y}) with fetched SVG`);
+    async loadGotchiSVG(gotchiId: string, playerID: string, x: number, y: number) {
+        console.log("loadGotchiSVG: ", gotchiId);
+        try {
+            const svgs = await fetchGotchiSVGs(gotchiId);
+            const svgDataUrl = `data:image/svg+xml;base64,${btoa(svgs.front)}`;
+            this.load.image(`gotchi-${playerID}-front`, svgDataUrl);
+            this.load.once('complete', () => {
+                if (this.players[playerID]) {
+                    this.players[playerID].sprite.destroy(); // Remove placeholder
+                    this.players[playerID].sprite = this.add.sprite(x, y, `gotchi-${playerID}-front`)
+                        .setDepth(1)
+                        .setScale(0.5) // Ensure 64x64 size
+                        .setName(playerID);
+                    
+                    // ensure we clear the follow player ID (as the sprite was destroyed)
+                    this.followedPlayerID = "";
+                    console.log(`Updated player ${playerID} with Gotchi SVG at (${x}, ${y})`);
                 }
             });
-        });
-        this.load.start();
+            this.load.start();
+        } catch (err) {
+            console.error('Failed to load Gotchi SVG for player', playerID, ':', err);
+        }
     }
 
     removePlayer(id: string) {
         if (this.players[id]) {
-            this.players[id].destroy();
+            this.players[id].sprite.destroy();
             delete this.players[id];
             console.log(`Removed player ${id}`);
         }
@@ -325,18 +279,6 @@ export class GameScene extends Phaser.Scene {
         this.stats = data;
         this.updateBars();
         console.log(`Stats updated for ${data.id}: HP ${data.hp}/${data.maxHP}, AP ${data.ap}/${data.maxAP}`);
-    }
-
-    handlePlayerUpdates(data: any[]) {
-        data.forEach(update => {
-            const sprite = this.players[update.id];
-            if (sprite) {
-                sprite.setPosition(update.x, update.y);
-                // console.log(`Updated player ${update.id} to (${update.x}, ${update.y})`);
-            } else {
-                console.log(`No sprite for player ${update.id} yet—awaiting load`);
-            }
-        });
     }
 
     handleEnemyUpdates(data: any) {
@@ -455,7 +397,7 @@ export class GameScene extends Phaser.Scene {
 
     update(time: number, delta: number) {
         this.moveTimer -= delta / 1000;
-        if (this.moveTimer <= 0 && this.isConnected) {
+        if (this.moveTimer <= 0 && this.isConnected && this.localPlayerID) {
             this.keyState = {
                 W: this.keys.W.isDown,
                 A: this.keys.A.isDown,
@@ -463,10 +405,10 @@ export class GameScene extends Phaser.Scene {
                 D: this.keys.D.isDown,
                 SPACE: this.keys.SPACE.isDown,
             };
-            const message = JSON.stringify({ type: 'input', data: this.keyState });
+            const message = JSON.stringify({ type: 'input', data: { id: this.localPlayerID, keys: this.keyState } });
             try {
                 this.ws.send(message);
-                // console.log('Sent input:', this.keyState);
+                // console.log('Sent input for local player:', this.localPlayerID, this.keyState);
             } catch (e) {
                 console.error('Failed to send input:', e);
             }
@@ -488,10 +430,11 @@ export class GameScene extends Phaser.Scene {
         this.scale.resize(newWidth, newHeight);
 
         const zoomX = newWidth / GAME_WIDTH;
+
         const zoomY = newHeight / GAME_HEIGHT;
         const zoom = Math.min(zoomX, zoomY);
 
-        this.cameras.main.setZoom(zoom);
+        this.cameras.main.setZoom(zoom*1.5);
 
         // Scale UI properly, preserving Phaser game window styling
         this.uiContainer.setPosition(-(GAME_WIDTH - newWidth) * 0.5, -(GAME_HEIGHT - newHeight) * 0.5);
@@ -500,12 +443,9 @@ export class GameScene extends Phaser.Scene {
         const canvas = this.game.canvas;
         canvas.style.position = 'absolute';
         canvas.style.left = '50%';
-        // canvas.style.top = '50%';
-        // canvas.style.transform = 'translate(-50%, 0%)';
         canvas.style.top = '50%';
         canvas.style.transform = 'translate(-50%, -50%)';
 
         // console.log('Resized game to width:', newWidth, 'height:', newHeight);
-
     }
 }

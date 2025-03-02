@@ -93,47 +93,27 @@ export class UIScene extends Phaser.Scene {
         }
     }
 
-    /*
-    connectWallet() {
-        console.log("Clicked Connect Wallet");
-        // Simulate wallet connection—triggered via App.tsx registry updates
-        // This will be handled by App.tsx, but we notify Phaser via registry
+    connectWallet = async () => {
+        console.log("connectWallet");
         if (window.ethereum) {
-            console.log("in window");
-            window.ethereum.request({ method: 'eth_requestAccounts' }).then((accounts: string[]) => {
-                if (this.registry.get('game') && accounts.length > 0) {
-                    this.registry.get('game').events.emit('connectWallet', accounts[0]);
-                    console.log("emit connectWallet");
-                } else {
-                    console.log("no accounts found");
-                }
-            }).catch((err: any) => console.error('Wallet connection failed:', err));
+            try {
+                const provider = new ethers.BrowserProvider(window.ethereum);
+                const accounts = await provider.send('eth_requestAccounts', []);
+                await window.ethereum.request({
+                    method: 'wallet_switchEthereumChain',
+                    params: [{ chainId: '0x89' }],
+                });
+                const gotchis = await fetchAavegotchis(accounts[0]);
+                gotchis.sort((a, b) => calculateBRS(b.modifiedNumericTraits) - calculateBRS(a.modifiedNumericTraits));
+                this.registry.set('account', accounts[0]);
+                this.registry.set('gotchis', gotchis);
+            } catch (err) {
+                console.error('Wallet connection or Gotchi fetch failed:', err.message || err);
+            }
         } else {
             console.error('MetaMask not detected');
         }
-    }*/
-
-        connectWallet = async () => {
-            console.log("connectWallet");
-            if (window.ethereum) {
-                try {
-                    const provider = new ethers.BrowserProvider(window.ethereum);
-                    const accounts = await provider.send('eth_requestAccounts', []);
-                    await window.ethereum.request({
-                        method: 'wallet_switchEthereumChain',
-                        params: [{ chainId: '0x89' }],
-                    });
-                    const gotchis = await fetchAavegotchis(accounts[0]);
-                    gotchis.sort((a, b) => calculateBRS(b.modifiedNumericTraits) - calculateBRS(a.modifiedNumericTraits));
-                    this.registry.set('account', accounts[0]);
-                    this.registry.set('gotchis', gotchis);
-                } catch (err) {
-                    console.error('Wallet connection or Gotchi fetch failed:', err.message || err);
-                }
-            } else {
-                console.error('MetaMask not detected');
-            }
-        };
+    };
 
     selectGotchi(gotchi: Aavegotchi) {
         // Update registry to trigger App.tsx and GameScene
@@ -155,7 +135,7 @@ export class UIScene extends Phaser.Scene {
             newWidth = newHeight * aspectRatio;
         }
 
-        this.scale.resize(newWidth, newHeight);
+        // this.scale.resize(newWidth, newHeight);
 
         const zoomX = newWidth / GAME_WIDTH;
         const zoomY = newHeight / GAME_HEIGHT;

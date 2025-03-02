@@ -1,7 +1,7 @@
 import { ethers } from 'ethers';
 
 export interface Aavegotchi {
-    id: string;
+    id: number;
     name: string;
     modifiedNumericTraits: number[];
     svgs: { front: string; left: string; right: string; back: string };
@@ -93,7 +93,7 @@ export async function fetchAavegotchis(account: string): Promise<Aavegotchi[]> {
     }]));
 
     return coreData.data.aavegotchis.map((g: any) => ({
-        id: g.id,
+        id: Number(g.id),
         name: g.name,
         modifiedNumericTraits: g.modifiedNumericTraits.map(Number),
         svgs: gotchisMap.get(g.id) || { front: '', left: '', right: '', back: '' },
@@ -124,7 +124,7 @@ export async function fetchGotchiSVGs(gotchiID: string): Promise<{ front: string
         throw new Error(`SVG subgraph request failed: ${response.status} ${response.statusText}`);
     }
     const data = await response.json();
-    console.log(`SVG fetch response for ${gotchiID}:`, JSON.stringify(data));
+    // console.log(`SVG fetch response for ${gotchiID}:`, JSON.stringify(data));
     if (data?.data?.aavegotchi) {
         const g = data.data.aavegotchi;
         return {
