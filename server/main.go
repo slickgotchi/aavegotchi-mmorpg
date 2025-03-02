@@ -39,17 +39,22 @@ type Player struct {
 	Conn      *websocket.Conn
 	GotchiID  int // Added to store Gotchi ID
 	IsPlaying bool
+	VelocityX float32
+	VelocityY float32
+	Direction int // 0 = front, 1 = left, 2 = right, 3 = back
 }
 
 type PlayerUpdate struct {
-	ID       string  `json:"id"`
-	X        float32 `json:"x"`
-	Y        float32 `json:"y"`
-	HP       int     `json:"hp"`
-	MaxHP    int     `json:"maxHp"`
-	AP       int     `json:"ap"`
-	MaxAP    int     `json:"maxAp"`
-	GotchiID int     `json:"gotchiId"`
+	ID        string  `json:"id"`
+	X         float32 `json:"x"`
+	Y         float32 `json:"y"`
+	HP        int     `json:"hp"`
+	MaxHP     int     `json:"maxHp"`
+	AP        int     `json:"ap"`
+	MaxAP     int     `json:"maxAp"`
+	GotchiID  int     `json:"gotchiId"`
+	Timestamp int64   `json:"timestamp"`
+	Direction int     `json:"direction"`
 }
 
 type Message struct {
@@ -92,6 +97,9 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		Conn:      conn,
 		GotchiID:  0, // we set GotchiID after 'join' message is received
 		IsPlaying: false,
+		VelocityX: 0,
+		VelocityY: 0,
+		Direction: 0,
 	}
 
 	// store new player in players
@@ -142,16 +150,118 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			select {
-			case inputChan <- Input{ID: p.ID, Msg: m}:
-				// log.Printf("Queued message for %s. Input channel length: %d", p.ID, len(inputChan))
+			switch m.Type {
+			case "join":
+				HandleMessage_Join(p.ID, m)
+			case "input":
+				HandleMessage_Input(p.ID, m)
 			default:
-				log.Println("Input channel full, dropping message for", p.ID)
 			}
 		}
 	}(p)
 
 	<-make(chan struct{})
+}
+
+func HandleMessage_Join(playerId string, msg Message) {
+	var joinData struct {
+		GotchiID int `json:"gotchiId"`
+	}
+	if err := json.Unmarshal(msg.Data, &joinData); err != nil || joinData.GotchiID == 0 {
+		log.Println("Invalid join data from", playerId, ":", err)
+		return
+	}
+
+	mu.RLock()
+	p := players[playerId]
+	mu.RUnlock()
+
+	p.GotchiID = joinData.GotchiID
+
+	log.Println("Player joined with GotchiID:", p.GotchiID)
+
+	log.Println("Calculating stats")
+
+	brs, err := fetchGotchiStats(strconv.Itoa(joinData.GotchiID))
+	if err != nil {
+		log.Println("Failed to fetch stats for", p.ID, ":", err)
+		return
+	}
+
+	p.HP, p.ATK, p.AP, p.RGN, p.Speed = calculateStats(brs)
+	p.MaxHP, p.MaxAP = p.HP, p.AP
+	p.IsPlaying = true
+	p.X = 8960
+	p.Y = 5600
+
+	mu.Lock()
+	players[p.ID] = p
+	mu.Unlock()
+}
+
+func HandleMessage_Input(playerId string, msg Message) {
+	var inputData struct {
+		ID   string `json:"id"`
+		Keys struct {
+			W     bool `json:"W"`
+			A     bool `json:"A"`
+			S     bool `json:"S"`
+			D     bool `json:"D"`
+			SPACE bool `json:"SPACE"`
+		} `json:"keys"`
+	}
+	if err := json.Unmarshal(msg.Data, &inputData); err != nil {
+		log.Println("Failed to unmarshal input for", playerId, ":", err)
+		return
+	}
+
+	mu.RLock()
+	p := players[playerId]
+	mu.RUnlock()
+
+	vx, vy := float32(0), float32(0)
+	if inputData.Keys.W {
+		vy -= p.Speed
+	}
+	if inputData.Keys.S {
+		vy += p.Speed
+	}
+	if inputData.Keys.A {
+		vx -= p.Speed
+	}
+	if inputData.Keys.D {
+		vx += p.Speed
+	}
+	if vx != 0 || vy != 0 {
+		norm := float32(math.Sqrt(float64(vx*vx + vy*vy)))
+		// p.X += (vx / norm) * p.Speed * 0.1
+		// p.Y += (vy / norm) * p.Speed * 0.1
+
+		p.VelocityX = (vx / norm) * p.Speed
+		p.VelocityY = (vy / norm) * p.Speed
+
+		if p.VelocityY < 0 {
+			p.Direction = 3
+		}
+		if p.VelocityY > 0 {
+			p.Direction = 0
+		}
+		if p.VelocityX > 0 {
+			p.Direction = 2
+		}
+		if p.VelocityX < 0 {
+			p.Direction = 1
+		}
+	}
+
+	if math.Abs(float64(vx)) < 0.01 && math.Abs(float64(vy)) < 0.01 {
+		p.VelocityX = 0
+		p.VelocityY = 0
+	}
+
+	mu.Lock()
+	players[p.ID] = p
+	mu.Unlock()
 }
 
 func GameLoop(inputChan <-chan Input, updateChan chan<- []PlayerUpdate) {
@@ -161,6 +271,7 @@ func GameLoop(inputChan <-chan Input, updateChan chan<- []PlayerUpdate) {
 		ticker.Stop()
 	}()
 
+	// var lastTime time.Time
 	for range ticker.C {
 		mu.RLock()
 		playerCount := len(players)
@@ -170,115 +281,33 @@ func GameLoop(inputChan <-chan Input, updateChan chan<- []PlayerUpdate) {
 			continue
 		}
 
-		var inputs []Input
-		for i := 0; i < 100; i++ {
-			select {
-			case input := <-inputChan:
-				// log.Println("GameLoop dequeued input for", input.ID, "type:", input.Msg.Type)
-				inputs = append(inputs, input)
-			case <-time.After(1 * time.Millisecond):
-				// log.Println("GameLoop no input available after timeout")
-				// break
-			}
-		}
+		// log.Println(time.Now().UnixMilli())
 
-		for _, input := range inputs {
-			mu.Lock()
-			p, ok := players[input.ID]
-			if !ok {
-				mu.Unlock()
-				log.Println("Player", input.ID, "not found, skipping input")
-				continue
-			}
-			// log.Println("GameLoop process input for", p.ID, "type:", input.Msg.Type)
-			mu.Unlock()
+		timestamp := time.Now().UnixMilli()
 
-			switch input.Msg.Type {
-
-			// join - occurs when a new gotchi is selected and player wants to spawn
-			case "join":
-				var joinData struct {
-					GotchiID int `json:"gotchiId"`
-				}
-				if err := json.Unmarshal(input.Msg.Data, &joinData); err != nil || joinData.GotchiID == 0 {
-					log.Println("Invalid join data from", p.ID, ":", err)
-					continue
-				}
-				mu.Lock()
-				p.GotchiID = joinData.GotchiID
-				players[p.ID] = p // Update player with GotchiID
-
-				mu.Unlock()
-				log.Println("Player joined with GotchiID:", p.GotchiID)
-
-				log.Println("Calculating stats")
-
-				brs, err := fetchGotchiStats(strconv.Itoa(joinData.GotchiID))
-				if err != nil {
-					log.Println("Failed to fetch stats for", p.ID, ":", err)
-					continue
-				}
-				mu.Lock()
-				p.HP, p.ATK, p.AP, p.RGN, p.Speed = calculateStats(brs)
-				p.MaxHP, p.MaxAP = p.HP, p.AP
-				p.IsPlaying = true
-				p.X = 8960
-				p.Y = 5600
-				players[p.ID] = p
-				mu.Unlock()
-
-				// input - all player input
-			case "input":
-				log.Println("Received: input")
-				var inputData struct {
-					ID   string `json:"id"`
-					Keys struct {
-						W     bool `json:"W"`
-						A     bool `json:"A"`
-						S     bool `json:"S"`
-						D     bool `json:"D"`
-						SPACE bool `json:"SPACE"`
-					} `json:"keys"`
-				}
-				if err := json.Unmarshal(input.Msg.Data, &inputData); err != nil {
-					log.Println("Failed to unmarshal input for", p.ID, ":", err)
-					continue
-				}
-				vx, vy := float32(0), float32(0)
-				if inputData.Keys.W {
-					vy -= p.Speed
-				}
-				if inputData.Keys.S {
-					vy += p.Speed
-				}
-				if inputData.Keys.A {
-					vx -= p.Speed
-				}
-				if inputData.Keys.D {
-					vx += p.Speed
-				}
-				if vx != 0 || vy != 0 {
-					norm := float32(math.Sqrt(float64(vx*vx + vy*vy)))
-					p.X += (vx / norm) * p.Speed * 0.1
-					p.Y += (vy / norm) * p.Speed * 0.1
-					log.Println("x: ", p.X, ", y: ", p.Y)
-				}
-			}
-		}
-
+		// log.Println(time.Now().UnixMilli())
 		mu.RLock()
 		var playerUpdates []PlayerUpdate
 		for _, p := range players {
+
+			// update player position
+			p.X += p.VelocityX * 0.1
+			p.Y += p.VelocityY * 0.1
+
 			playerUpdate := PlayerUpdate{
-				ID:       p.ID,
-				X:        p.X,
-				Y:        p.Y,
-				HP:       p.HP,
-				MaxHP:    p.MaxHP,
-				AP:       p.AP,
-				MaxAP:    p.MaxAP,
-				GotchiID: p.GotchiID,
+				ID:        p.ID,
+				X:         p.X,
+				Y:         p.Y,
+				HP:        p.HP,
+				MaxHP:     p.MaxHP,
+				AP:        p.AP,
+				MaxAP:     p.MaxAP,
+				GotchiID:  p.GotchiID,
+				Timestamp: timestamp,
+				Direction: p.Direction,
 			}
+
+			// log.Println(time.Now().UnixMilli())
 
 			playerUpdates = append(playerUpdates, playerUpdate)
 			// log.Println("added player update: ", playerUpdate)

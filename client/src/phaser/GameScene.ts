@@ -3,11 +3,18 @@ import { fetchGotchiSVGs, Aavegotchi } from './FetchGotchis'; // Adjusted import
 
 const GAME_WIDTH = 1920;
 const GAME_HEIGHT = 1200;
+const MAX_POSITION_BUFFER_LENGTH = 10;
+const INTERPOLATION_DELAY_MS = 250;
 
 export interface Player {
     sprite: Phaser.GameObjects.Sprite;
     gotchiId: number;
     isAssignedSVG: boolean;
+    positionBuffer: {
+        x: number,
+        y: number,
+        timestamp: number,
+    }[]
 }
 
 export class GameScene extends Phaser.Scene {
@@ -204,8 +211,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     addOrUpdatePlayer(data: any) {
-        // console.log("addOrUpdatePlayer: ", data);
-        // player does not exist - add
+        // NEW PLAYER
         if (!this.players[data.id]) {
             var newPlayerSprite = this.add.sprite(data.x, data.y, 'gotchi_placeholder')
                 .setDepth(1)
@@ -216,23 +222,55 @@ export class GameScene extends Phaser.Scene {
                 sprite: newPlayerSprite,
                 gotchiId: data.gotchiId,
                 isAssignedSVG: false,
+                positionBuffer: [],
             } 
 
             console.log(`Added placeholder player ${data.id} at (${data.x}, ${data.y})`);
         } 
-        // player exists - move
+
+        // MOVE EXISTING PLAYER
         else {
-            this.players[data.id].sprite.setPosition(data.x, data.y);
+            // this.players[data.id].sprite.setPosition(data.x, data.y);
+            this.players[data.id].positionBuffer.push({
+                x: data.x,
+                y: data.y,
+                timestamp: data.timestamp
+            });
+
+            while (this.players[data.id].positionBuffer.length > MAX_POSITION_BUFFER_LENGTH) {
+                this.players[data.id].positionBuffer.shift();
+            }
         }
 
-        // player with GotchiID but no svg yet
+        // SVG YET TO BE ASSIGNED PLAYER
         if (!this.players[data.id].isAssignedSVG && data.gotchiId !== 0) {
             this.players[data.id].gotchiId = data.gotchiId;
             this.players[data.id].isAssignedSVG = true;
             this.loadGotchiSVG(data.gotchiId, data.id, data.x, data.y);
         }
 
-        // local player
+        // CHANGE FACING DIRECTION OF PLAYER
+        if (this.players[data.id].isAssignedSVG) {
+            switch (data.direction) {
+                case 0: // front
+                    this.players[data.id].sprite.setTexture(`gotchi-${data.gotchiId}-front`)
+                    break;
+                case 1: // left
+                    this.players[data.id].sprite.setTexture(`gotchi-${data.gotchiId}-left`)
+                    break;
+                case 2: // right
+                    this.players[data.id].sprite.setTexture(`gotchi-${data.gotchiId}-right`)
+                    break;
+                case 3: // back
+                    this.players[data.id].sprite.setTexture(`gotchi-${data.gotchiId}-back`)
+                    break;
+                default:
+                    break;
+
+            }
+        }
+
+        // LOCAL PLAYER ONLY (CAMERA SETUP)
         if (data.id === this.localPlayerID) {
             if (this.followedPlayerID !== data.id) {
                 this.followedPlayerID = data.id;
@@ -246,26 +284,39 @@ export class GameScene extends Phaser.Scene {
         console.log("loadGotchiSVG: ", gotchiId);
         try {
             const svgs = await fetchGotchiSVGs(gotchiId);
-            const svgDataUrl = `data:image/svg+xml;base64,${btoa(svgs.front)}`;
-            this.load.image(`gotchi-${playerID}-front`, svgDataUrl);
+    
+            // Define the four views
+            const views: (keyof typeof svgs)[] = ["front", "left", "right", "back"];
+    
+            // Load all views
+            views.forEach(view => {
+                const svgDataUrl = `data:image/svg+xml;base64,${btoa(svgs[view])}`;
+                this.load.image(`gotchi-${gotchiId}-${view}`, svgDataUrl);
+            });
+    
+            // Handle completion of image loading
             this.load.once('complete', () => {
                 if (this.players[playerID]) {
                     this.players[playerID].sprite.destroy(); // Remove placeholder
-                    this.players[playerID].sprite = this.add.sprite(x, y, `gotchi-${playerID}-front`)
+                    
+                    // Create the sprite using the "front" view by default
+                    this.players[playerID].sprite = this.add.sprite(x, y, `gotchi-${gotchiId}-front`)
                         .setDepth(1)
                         .setScale(0.5) // Ensure 64x64 size
                         .setName(playerID);
                     
-                    // ensure we clear the follow player ID (as the sprite was destroyed)
+                    // Ensure we clear the followed player ID (as the sprite was destroyed)
                     this.followedPlayerID = "";
                     console.log(`Updated player ${playerID} with Gotchi SVG at (${x}, ${y})`);
                 }
             });
+    
             this.load.start();
         } catch (err) {
             console.error('Failed to load Gotchi SVG for player', playerID, ':', err);
         }
     }
+    
 
     removePlayer(id: string) {
         if (this.players[id]) {
@@ -413,6 +464,49 @@ export class GameScene extends Phaser.Scene {
                 console.error('Failed to send input:', e);
             }
             this.moveTimer = 0.1;
+        }
+
+        // interpolate playres
+        this.interpolatePlayers();
+    }
+
+    interpolatePlayers() {
+        for (const id in this.players) {
+            if (this.players.hasOwnProperty(id)) {
+                const player = this.players[id];
+
+                if (player.positionBuffer.length <= 0) continue;
+
+                const lastBufferIndex = player.positionBuffer.length - 1;
+                if (player.positionBuffer.length < 3) {
+                    player.sprite.x = player.positionBuffer[lastBufferIndex].x;
+                    player.sprite.y = player.positionBuffer[lastBufferIndex].y;
+                }
+                else {
+                    var targetTime = Date.now() - INTERPOLATION_DELAY_MS;
+                    var positionBuffer = player.positionBuffer;
+
+                    let older, newer;
+                    for (let i = 0; i < positionBuffer.length - 1; i++) {
+                        if (positionBuffer[i].timestamp <= targetTime && positionBuffer[i + 1].timestamp >= targetTime) {
+                            older = positionBuffer[i];
+                            newer = positionBuffer[i + 1];
+                            break;
+                        }
+                    }
+                
+                    if (older && newer) {
+                        // Normal interpolation
+                        let alpha = (targetTime - older.timestamp) / (newer.timestamp - older.timestamp);
+                        // alpha = Math.min(alpha, 1);
+                        // alpha = Math.max(alpha, 0);
+                        player.sprite.setPosition(
+                            older.x + (newer.x - older.x) * alpha,
+                            older.y + (newer.y - older.y) * alpha
+                        );
+                    }
+                }
+            }
         }
     }
 
