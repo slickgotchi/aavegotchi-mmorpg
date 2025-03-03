@@ -44,6 +44,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     preload() {
+        this.load.image('tileset', 'assets/tiles/tileset.png');
         this.load.image('tileset-extruded', 'assets/tiles/tileset-extruded.png');
         this.load.tilemapTiledJSON('map', 'assets/exports/mmorpg.json');
         this.load.image('enemy-easy', '/assets/enemy-easy.png');
@@ -150,7 +151,8 @@ createTilemap() {
     }
     console.log('Tilemap loaded successfully');
 
-    const tileset = map.addTilesetImage('tileset', 'tileset-extruded', 32, 32, 5, 10);
+    const tileset = map.addTilesetImage('tileset', 'tileset', 32, 32);
+    // const tileset = map.addTilesetImage('tileset', 'tileset-extruded', 32, 32, 5, 10);
     if (!tileset) {
         console.error('Tileset not found or invalid in map');
         return;
