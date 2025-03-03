@@ -13,11 +13,14 @@
             "scaleInEditor": 1
         },
         "/Users/slickgotchi/Projects/aavegotchi-mmorpg/assets/tilemaps/mmorpg.tmx": {
-            "scale": 0.03,
-            "selectedLayer": 0,
+            "expandedGroupLayers": [
+                3
+            ],
+            "scale": 0.75,
+            "selectedLayer": 2,
             "viewCenter": {
-                "x": 8766.666666666666,
-                "y": 7883.333333333334
+                "x": 6476,
+                "y": 4892.666666666666
             }
         },
         "/Users/slickgotchi/Projects/aavegotchi-mmorpg/assets/tilemaps/mmorpg.tmx#tileset": {
@@ -29,9 +32,9 @@
             "scaleInEditor": 1
         }
     },
-    "last.exportedFilePath": "/Users/slickgotchi/Projects/aavegotchi-mmorpg/client/public/assets/exports",
+    "last.exportedFilePath": "/Users/slickgotchi/Projects/aavegotchi-mmorpg/shared/tilemap",
     "last.externalTilesetPath": "/Users/slickgotchi/Projects/aavegotchi-mmorpg/assets/tilesets",
-    "last.imagePath": "/Users/slickgotchi/Projects/aavegotchi-mmorpg/assets/tiles",
+    "last.imagePath": "/Users/slickgotchi/Projects/aavegotchi-mmorpg/shared/tilemap",
     "map.height": 250,
     "map.lastUsedExportFilter": "JSON map files (*.tmj *.json)",
     "map.lastUsedFormat": "tmx",
@@ -39,7 +42,7 @@
     "openFiles": [
     ],
     "project": "aavegotchi-mmorpg.tiled-project",
-    "property.type": "string",
+    "property.type": "int",
     "recentFiles": [
         "/Users/slickgotchi/Projects/aavegotchi-mmorpg/assets/tilemaps/mmorpg.tmx",
         "/Users/slickgotchi/Projects/aavegotchi-mmorpg/assets/tilesets/tileset.tsx"

@@ -6,28 +6,39 @@ const GAME_HEIGHT = 1200;
 const MAX_POSITION_BUFFER_LENGTH = 10;
 const INTERPOLATION_DELAY_MS = 250;
 
+export interface PositionUpdate {
+    x: number;
+    y: number;
+    timestamp: number;
+}
+
 export interface Player {
     sprite: Phaser.GameObjects.Sprite;
     gotchiId: number;
     isAssignedSVG: boolean;
-    positionBuffer: {
-        x: number,
-        y: number,
-        timestamp: number,
-    }[],
+    positionBuffer: PositionUpdate[],
     hp: number;
     maxHp: number;
     ap: number;
     maxAp: number;
 }
 
+export interface Enemy {
+    container: Phaser.GameObjects.Container;
+    hpBar: Phaser.GameObjects.Rectangle;
+    maxHp: number;
+    type: string;
+    positionBuffer: PositionUpdate[];
+    hp: number;
+    direction?: number; // Optional for enemies (if needed for animations)
+}
+
 export class GameScene extends Phaser.Scene {
     private players: { [id: string]: Player } = {};
-    private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
+    private enemies: { [id: string]: Enemy } = {}
     private ws!: WebSocket;
     private keys!: { W: Phaser.Input.Keyboard.Key; A: Phaser.Input.Keyboard.Key; S: Phaser.Input.Keyboard.Key; D: Phaser.Input.Keyboard.Key; SPACE: Phaser.Input.Keyboard.Key };
-    private enemies: { [id: string]: { sprite: Phaser.GameObjects.Sprite; hpBar: Phaser.GameObjects.Rectangle; maxHP: number } } = {};
-    private stats = { hp: 0, maxHP: 0, atk: 0, ap: 0, maxAP: 0, rgn: 0 };
+    // private stats = { hp: 0, maxHP: 0, atk: 0, ap: 0, maxAP: 0, rgn: 0 };
     private moveTimer = 0;
     private circlePool: Phaser.GameObjects.Graphics[] = [];
     private textPool: Phaser.GameObjects.Text[] = [];
@@ -44,9 +55,9 @@ export class GameScene extends Phaser.Scene {
     }
 
     preload() {
-        this.load.image('tileset', 'assets/tiles/tileset.png');
-        this.load.image('tileset-extruded', 'assets/tiles/tileset-extruded.png');
-        this.load.tilemapTiledJSON('map', 'assets/exports/mmorpg.json');
+        this.load.image('tileset', 'assets/tilemap/tileset.png');
+        // this.load.image('tileset-extruded', 'assets/tiles/tileset-extruded.png');
+        this.load.tilemapTiledJSON('map', 'assets/tilemap/mmorpg.json');
         this.load.image('enemy-easy', '/assets/enemy-easy.png');
         this.load.image('enemy-medium', '/assets/enemy-medium.png');
         this.load.image('enemy-hard', '/assets/enemy-hard.png');
@@ -68,7 +79,7 @@ export class GameScene extends Phaser.Scene {
 
         this.createTilemap();
 
-        this.cursors = this.input.keyboard.createCursorKeys();
+        // this.cursors = this.input.keyboard.createCursorKeys();
 
         for (let i = 0; i < 10; i++) {
             const circle = this.add.graphics();
@@ -105,24 +116,28 @@ export class GameScene extends Phaser.Scene {
                         this.followedPlayerID = "";
                         break;
                     case "playerUpdates":
-                        if (data){
-                            if (Array.isArray(data)) {
-                                data.forEach(update => {
-                                    this.addOrUpdatePlayer(update);
-                                });
-                            } else {
-                                console.error('PlayerUpdates updates is not an array:', data);
-                            }
-                        }
+                        if (Array.isArray(data)) {
+                            data.forEach(update => {
+                                this.addOrUpdatePlayer(update);
+                            });
+                        } 
                         break;
+                    case "attackUpdates":
+                        if (Array.isArray(data)){
+                            data.forEach(datum => {
+                                this.handleAttackUpdates(datum);
+                            })
+                        }
+                    break;
                     case "playerDisconnected":
                         this.removePlayer(data.id);
                         break;
                     case "enemyUpdates":
-                        this.handleEnemyUpdates(data);
-                        break;
-                    case "combat":
-                        this.handleCombat(data);
+                        if (Array.isArray(data)){
+                            data.forEach(datum => {
+                                this.addOrUpdateEnemy(datum);
+                            });
+                        }
                         break;
                 }
             };
@@ -143,62 +158,238 @@ export class GameScene extends Phaser.Scene {
         this.registry.get('game').events.on('selectGotchi', this.onGotchiSelected, this);
     }
 
-createTilemap() {
-    const map = this.make.tilemap({ key: 'map' });
-    if (!map) {
-        console.error('Tilemap failed to load');
-        return;
+    addOrUpdateEnemy(data: any) {
+        // NEW ENEMY
+        if (!this.enemies[data.id] && data.hp > 0) {
+            const texture = `enemy-${data.type}`;
+            const sprite = this.add.sprite(0, 0, texture)
+                .setDepth(1000) // Match player depth for consistency
+                .setScale(1); // Adjust scale to match player size if needed
+                
+            // Create the shadow (ellipse graphic)
+            const shadow = this.add.ellipse(0, sprite.height / 2, 24, 16, 0x000000, 0.5);
+            shadow.setDepth(999); // Slightly lower depth than enemy
+            shadow.setAlpha(0.5); // Semi-transparent shadow
+            
+            const hpBar = this.add.rectangle(0, - 30, 32, 5, 0xff0000).setOrigin(0.5, 0);
+
+            // Create a container to group the enemy and shadow
+            const container = this.add.container(data.x, data.y, [shadow, sprite, hpBar]);
+            container.setDepth(1000);
+
+            this.enemies[data.id] = {
+                container: container,
+                hpBar,
+                maxHp: data.maxHp,
+                type: data.type,
+                positionBuffer: [],
+                hp: data.hp,
+                direction: data.direction, // Add direction if enemies have animations
+            };
+
+            console.log(`Added enemy ${data.id} at (${data.x}, ${data.y}) with type ${data.type}`);
+        }
+
+        // MOVE EXISTING ENEMY
+        else if (data.hp > 0) {
+            this.enemies[data.id].positionBuffer.push({
+                x: data.x,
+                y: data.y,
+                timestamp: data.timestamp
+            });
+
+            // console.log(this.enemies[data.id]);
+
+            while (this.enemies[data.id].positionBuffer.length > MAX_POSITION_BUFFER_LENGTH) {
+                this.enemies[data.id].positionBuffer.shift();
+            }
+
+            // Update HP and direction
+            this.enemies[data.id].hp = data.hp;
+            if (data.direction !== undefined) {
+                this.enemies[data.id].direction = data.direction;
+                // Update enemy sprite direction if animations exist (e.g., similar to players)
+                // Note: You may need to define enemy textures like `enemy-easy-front`, `enemy-easy-left`, etc., if using directional sprites
+            }
+
+            this.updateEnemyHP(data.id);
+        }
+
+        if (data.hp <= 0){
+            this.removeEnemy(data.id);
+        }
     }
-    console.log('Tilemap loaded successfully');
 
-    const tileset = map.addTilesetImage('tileset', 'tileset', 32, 32);
-    // const tileset = map.addTilesetImage('tileset', 'tileset-extruded', 32, 32, 5, 10);
-    if (!tileset) {
-        console.error('Tileset not found or invalid in map');
-        return;
+    // Function to create a simple rectangle explosion
+    createRectExplosion(x: number, y: number, radius = 16, duration = 500, minWidth = 5, maxWidth = 10, minHeight = 5, maxHeight = 10) {
+        // Create three rectangles spaced 120 degrees apart
+        for (let i = 0; i < 3; i++) {
+            const angle = Phaser.Math.DegToRad(i * 120); // 120 degrees apart
+            const distance = Phaser.Math.Between(0, radius); // Random distance within the radius
+
+            // Calculate the position of each rectangle
+            const rectX = x + Math.cos(angle) * distance;
+            const rectY = y + Math.sin(angle) * distance;
+
+            // Randomly set width and height within given bounds
+            const width = Phaser.Math.Between(minWidth, maxWidth);
+            const height = Phaser.Math.Between(minHeight, maxHeight);
+
+            // Create a rectangle
+            const rect = this.add.graphics({ x: rectX, y: rectY });
+            rect.fillStyle(0x888888, 1); // Grey color
+            rect.fillRect(0, 0, width, height);
+            rect.setDepth(901);
+
+            // Animate the rectangle (fade and move outwards)
+            this.tweens.add({
+                targets: rect,
+                x: rect.x + Math.cos(angle) * radius * 1.5, // Move further outwards
+                y: rect.y + Math.sin(angle) * radius * 1.5, // Move further outwards
+                alpha: 0, // Fade out
+                duration: duration,
+                ease: 'Cubic.Out',
+                onComplete: () => rect.destroy() // Destroy after animation
+            });
+        }
     }
-    console.log('Tileset added successfully, tile width:', tileset.tileWidth, 'tile height:', tileset.tileHeight);
 
-    console.log('Available layers:', map.layers.map(l => l.name));
+    // Modify your removeEnemy method to call this new explosion effect
+    removeEnemy(id: string) {
+        if (this.enemies[id]) {
+            const x = this.enemies[id].container.x;
+            const y = this.enemies[id].container.y;
 
-    // Loop through all layers dynamically
-    map.layers.forEach((layerData, index) => {
-        const layerName = layerData.name;
+            // Call the explosion effect
+            this.createRectExplosion(x, y);
 
-        // Safely access properties and check for 'isHidden' property
-        const isHidden = (layerData.properties as Array<{ name: string, value: any }>)?.find((prop) => prop.name === 'isHidden')?.value === true;
-        if (isHidden) {
-            console.log(`Skipping hidden layer: ${layerName}`);
+            // Destroy the enemy
+            this.enemies[id].container.destroy();
+            this.enemies[id].hpBar.destroy();
+            delete this.enemies[id];
+            console.log(`Removed enemy ${id}`);
+        }
+    }
+
+
+    updateEnemyHP(id: string) {
+        if (this.enemies[id]) {
+            const enemy = this.enemies[id];
+            if (enemy.hp <= 0) {
+                this.removeEnemy(id);
+            } else {
+                // console.log(enemy.hp, enemy.maxHp);
+                enemy.hpBar.width = 32 * (enemy.hp / enemy.maxHp);
+            }
+        }
+    }
+
+    handleAttackUpdates(data: any) {
+        console.log(data);
+        const radius = data.radius;
+        const x = data.x;
+        const y = data.y;
+    
+        console.log("attack animation at x: ", x, ", y: ", y, ", radius: ", radius);
+    
+        // Get a pooled circle (or create one if none available)
+        const circle = this.getPooledCircle(x, y, radius, 0xffffff); // White circle
+        circle.setAlpha(0.5).setVisible(true);
+        circle.setDepth(900);
+    
+        // Create the rectangle (bat effect)
+        const rectWidth = radius;   // Length extends **one radius outward**
+        const rectHeight = radius * 0.1; // Thin width (20% of radius)
+        
+        // Position rectangle so **one end is at (0,0)** and it extends outward
+        const rectangle = this.add.rectangle(radius / 2, 0, rectWidth, rectHeight, 0x808080);
+        rectangle.setAlpha(0.6);
+    
+        // Create a container at the attack center
+        const container = this.add.container(x, y, [rectangle]);
+        container.setDepth(901);
+        container.rotation = Phaser.Math.DegToRad(90); // ✅ Start rotated correctly
+    
+        // Rotate the container around the attack center
+        this.tweens.add({
+            targets: container,
+            angle: 360,  // Full rotation
+            duration: 250, // Over 200ms
+            repeat: 0, // No repeats
+            ease: 'Linear'
+        });
+    
+        // Fade out both the circle and rectangle together
+        this.tweens.add({
+            targets: [circle],
+            alpha: 0.2,
+            duration: 250,
+            onComplete: () => {
+                circle.setVisible(false);
+                container.destroy(); // Destroy container (removes rectangle too)
+            }
+        });
+    }
+    
+    
+    
+
+    createTilemap() {
+        const map = this.make.tilemap({ key: 'map' });
+        if (!map) {
+            console.error('Tilemap failed to load');
             return;
         }
+        console.log('Tilemap loaded successfully');
 
-        // Create the layer if it's not hidden
-        const layer = map.createLayer(layerName, tileset, 0, 0);
-        if (layer) {
-            // Dynamically set depth based on layer order (top layers should have higher depth)
-            layer.setDepth(map.layers.length - index); // Layers at the top get higher depth values
-            layer.setVisible(true);
-            console.log(`Layer "${layerName}" created successfully at depth ${map.layers.length - index}`);
-        } else {
-            console.error(`Layer "${layerName}" creation failed`);
+        const tileset = map.addTilesetImage('tileset', 'tileset', 32, 32);
+        // const tileset = map.addTilesetImage('tileset', 'tileset-extruded', 32, 32, 5, 10);
+        if (!tileset) {
+            console.error('Tileset not found or invalid in map');
+            return;
         }
-    });
+        console.log('Tileset added successfully, tile width:', tileset.tileWidth, 'tile height:', tileset.tileHeight);
 
-    // Set up camera bounds
-    this.cameras.main.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
+        console.log('Available layers:', map.layers.map(l => l.name));
 
-    // Dynamically center camera follow based on tilemap size
-    const centerX = map.widthInPixels / 2;
-    const centerY = map.heightInPixels / 2;
+        // Loop through all layers dynamically
+        map.layers.forEach((layerData, index) => {
+            const layerName = layerData.name;
 
-    const initialCameraFollow = this.add.rectangle(centerX, centerY, 20, 20, 0xff0000)
-        .setOrigin(0.5, 0.5)
-        .setAlpha(0); // Invisible
+            // Safely access properties and check for 'isHidden' property
+            const isHidden = (layerData.properties as Array<{ name: string, value: any }>)?.find((prop) => prop.name === 'isHidden')?.value === true;
+            if (isHidden) {
+                console.log(`Skipping hidden layer: ${layerName}`);
+                return;
+            }
 
-    this.cameras.main.startFollow(initialCameraFollow);
+            // Create the layer if it's not hidden
+            const layer = map.createLayer(layerName, tileset, 0, 0);
+            if (layer) {
+                // Dynamically set depth based on layer order (top layers should have higher depth)
+                layer.setDepth(map.layers.length - index); // Layers at the top get higher depth values
+                layer.setVisible(true);
+                console.log(`Layer "${layerName}" created successfully at depth ${map.layers.length - index}`);
+            } else {
+                console.error(`Layer "${layerName}" creation failed`);
+            }
+        });
 
-    console.log(`Camera set up with bounds: ${map.widthInPixels}x${map.heightInPixels}, following (${centerX}, ${centerY})`);
-}
+        // Set up camera bounds
+        this.cameras.main.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
+
+        // Dynamically center camera follow based on tilemap size
+        const centerX = map.widthInPixels / 2;
+        const centerY = map.heightInPixels / 2;
+
+        const initialCameraFollow = this.add.rectangle(centerX, centerY, 20, 20, 0xff0000)
+            .setOrigin(0.5, 0.5)
+            .setAlpha(0); // Invisible
+
+        this.cameras.main.startFollow(initialCameraFollow);
+
+        console.log(`Camera set up with bounds: ${map.widthInPixels}x${map.heightInPixels}, following (${centerX}, ${centerY})`);
+    }
 
     
 
@@ -341,87 +532,11 @@ createTilemap() {
         }
     }
 
-    handleEnemyUpdates(data: any) {
-        const view = this.cameras.main.worldView;
-        for (const id in data) {
-            const e = data[id];
-            if (this.isInView(e.x, e.y, view)) {
-                if (!this.enemies[id]) {
-                    this.addEnemy(id, { type: id.split('-')[0], x: e.x, y: e.y, hp: e.hp, maxHP: e.hp });
-                } else {
-                    this.enemies[id].sprite.setPosition(e.x, e.y);
-                    this.updateEnemyHP(id, e.hp);
-                }
-            } else if (this.enemies[id]) {
-                this.removeEnemy(id);
-            }
-        }
-    }
-
-    addEnemy(id: string, e: { type: string; x: number; y: number; hp: number; maxHP: number }) {
-        const texture = `enemy-${e.type}`;
-        const sprite = this.add.sprite(e.x, e.y, texture);
-        const hpBar = this.add.rectangle(e.x, e.y - 40, 32, 5, 0xff0000).setOrigin(0.5, 0);
-        this.enemies[id] = { sprite, hpBar, maxHP: e.maxHP };
-        this.updateEnemyHP(id, e.hp);
-        console.log('Added enemy', id, 'at x:', e.x, 'y:', e.y);
-    }
-
-    removeEnemy(id: string) {
-        if (this.enemies[id]) {
-            this.enemies[id].sprite.destroy();
-            this.enemies[id].hpBar.destroy();
-            delete this.enemies[id];
-            console.log('Removed enemy', id);
-        }
-    }
 
     isInView(x: number, y: number, view: Phaser.Geom.Rectangle): boolean {
         const buffer = 256;
         return x >= view.left - buffer && x <= view.right + buffer &&
             y >= view.top - buffer && y <= view.bottom + buffer;
-    }
-
-    
-
-    updateEnemyHP(id: string, hp: number) {
-        if (this.enemies[id]) {
-            const enemy = this.enemies[id];
-            if (hp <= 0) {
-                this.removeEnemy(id);
-            } else {
-                enemy.hpBar.width = 32 * (hp / enemy.maxHP);
-                enemy.hpBar.setPosition(enemy.sprite.x, enemy.sprite.y - 40);
-            }
-        }
-    }
-
-    handleCombat(data: any) {
-        const enemy = this.enemies[data.targetID];
-        if (!enemy) return;
-        const radius = data.special ? 192 : 128;
-        const color = data.special ? 0xffff00 : 0xff0000;
-        const circle = this.getPooledCircle(enemy.sprite.x, enemy.sprite.y, radius, color);
-        const damageText = this.getPooledText(enemy.sprite.x, enemy.sprite.y - 20, `-${data.damage}`);
-        this.tweens.add({
-            targets: circle,
-            alpha: 0,
-            duration: 200,
-            onComplete: () => circle.setVisible(false)
-        });
-        this.tweens.add({
-            targets: damageText,
-            y: enemy.sprite.y - 40,
-            alpha: 0,
-            duration: 1000,
-            onComplete: () => damageText.setVisible(false)
-        });
-        this.updateEnemyHP(data.targetID, data.newHP);
-        if (data.playerHP || data.playerAP) {
-            this.stats.hp = data.playerHP || this.stats.hp;
-            this.stats.ap = data.playerAP || this.stats.ap;
-            // this.updateBars();
-        }
     }
 
     getPooledCircle(x: number, y: number, radius: number, color: number): Phaser.GameObjects.Graphics {
@@ -471,6 +586,7 @@ createTilemap() {
 
         // interpolate playres
         this.interpolatePlayers();
+        this.interpolateEnemies();
     }
 
     interpolatePlayers() {
@@ -504,6 +620,46 @@ createTilemap() {
                         // alpha = Math.min(alpha, 1);
                         // alpha = Math.max(alpha, 0);
                         player.sprite.setPosition(
+                            older.x + (newer.x - older.x) * alpha,
+                            older.y + (newer.y - older.y) * alpha
+                        );
+                    }
+                }
+
+                // console.log(player.sprite.x, player.sprite.y);
+            }
+        }
+    }
+
+    interpolateEnemies() {
+        for (const id in this.enemies) {
+            if (this.enemies.hasOwnProperty(id)) {
+                const enemy = this.enemies[id];
+
+                if (enemy.positionBuffer.length <= 0) continue;
+
+                const lastBufferIndex = enemy.positionBuffer.length - 1;
+                if (enemy.positionBuffer.length < 3) {
+                    enemy.container.x = enemy.positionBuffer[lastBufferIndex].x;
+                    enemy.container.y = enemy.positionBuffer[lastBufferIndex].y;
+                } else {
+                    const targetTime = Date.now() - INTERPOLATION_DELAY_MS;
+                    const positionBuffer = enemy.positionBuffer;
+
+                    let older, newer;
+                    for (let i = 0; i < positionBuffer.length - 1; i++) {
+                        if (positionBuffer[i].timestamp <= targetTime && positionBuffer[i + 1].timestamp >= targetTime) {
+                            older = positionBuffer[i];
+                            newer = positionBuffer[i + 1];
+                            break;
+                        }
+                    }
+
+                    if (older && newer) {
+                        // Normal interpolation
+                        let alpha = (targetTime - older.timestamp) / (newer.timestamp - older.timestamp);
+                        alpha = Math.min(1, Math.max(0, alpha));
+                        enemy.container.setPosition(
                             older.x + (newer.x - older.x) * alpha,
                             older.y + (newer.y - older.y) * alpha
                         );

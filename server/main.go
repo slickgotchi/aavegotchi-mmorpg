@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"math"
+	"math/rand"
 	"net/http"
 	"strconv"
 	"sync"
@@ -42,6 +43,10 @@ type Player struct {
 	VelocityX float32
 	VelocityY float32
 	Direction int // 0 = front, 1 = left, 2 = right, 3 = back
+
+	AttackTimerMs    float32
+	AttackIntervalMs float32
+	AttackRadius     float32
 }
 
 type PlayerUpdate struct {
@@ -62,6 +67,21 @@ type Message struct {
 	Data json.RawMessage `json:"data"`
 }
 
+type AttackUpdate struct {
+	AttackerID string   `json:"attackerId"`
+	HitIDs     []string `json:"hitIds"`
+	Type       string   `json:"type"`
+	Radius     float32  `json:"radius"`
+	X          float32  `json:"x"`
+	Y          float32  `json:"y"`
+}
+
+type DamageUpdate struct {
+	ID     string `json:"id"`
+	Type   string `json:"type"`
+	Damage int    `json:"damage"`
+}
+
 type Input struct {
 	ID  string
 	Msg Message
@@ -69,7 +89,10 @@ type Input struct {
 
 var (
 	players          = make(map[string]*Player)
-	updateChan       = make(chan []PlayerUpdate, 1000)
+	playerUpdateChan = make(chan []PlayerUpdate, 1000)
+	enemyUpdateChan  = make(chan []EnemyUpdate, 1000)
+	attackUpdateChan = make(chan []AttackUpdate, 1000)
+	damageUpdateChan = make(chan []DamageUpdate, 1000)
 	mu               sync.RWMutex
 	TICK_INTERVAL_MS int = 100
 	MAP_WIDTH_TILES  int = 400
@@ -92,7 +115,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		Y:         float32(MAP_HEIGHT_TILES*PIXELS_PER_TILE) / 2,
 		HP:        100,
 		MaxHP:     100,
-		ATK:       10,
+		ATK:       45,
 		AP:        100,
 		MaxAP:     100,
 		RGN:       1.0,
@@ -103,6 +126,10 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		VelocityX: 0,
 		VelocityY: 0,
 		Direction: 0,
+
+		AttackTimerMs:    0,
+		AttackIntervalMs: 1000,
+		AttackRadius:     4 * 32,
 	}
 
 	// store new player in players
@@ -269,17 +296,13 @@ func GameLoop(updateChan chan<- []PlayerUpdate) {
 	}()
 
 	for range ticker.C {
-		mu.RLock()
-		playerCount := len(players)
-		mu.RUnlock()
-
-		if playerCount == 0 {
+		if len(players) <= 0 {
 			continue
 		}
 
-		// handle all tick logic
 		handleLogicPlayerMovement(TICK_INTERVAL_MS, time.Now().UnixMilli())
-
+		handleLogicEnemyMovement(TICK_INTERVAL_MS, time.Now().UnixMilli())
+		handleLogicPlayerAttacks(TICK_INTERVAL_MS, time.Now().UnixMilli())
 	}
 }
 
@@ -310,7 +333,7 @@ func handleLogicPlayerMovement(tickInterval_ms int, timestamp int64) {
 
 	if len(playerUpdates) > 0 {
 		select {
-		case updateChan <- playerUpdates:
+		case playerUpdateChan <- playerUpdates:
 			// log.Println("GameLoop sent updates for", len(playerUpdates), "players")
 		default:
 			log.Println("GameLoop updateChan full, skipping broadcast")
@@ -318,25 +341,252 @@ func handleLogicPlayerMovement(tickInterval_ms int, timestamp int64) {
 	}
 }
 
-func BroadcastLoop(updateChan <-chan []PlayerUpdate) {
+func handleLogicPlayerAttacks(tickIntervalms int, timestamp int64) {
+
+	var attackUpdates []AttackUpdate
+	var damageUpdates []DamageUpdate
+
+	for _, p := range players {
+		mu.Lock()
+		// check for enemies in range
+		playerMinX := p.X - 40*0.5*32
+		playerMinY := p.Y - 25*0.5*32
+		playerMaxX := p.X + 40*0.5*32
+		playerMaxY := p.Y + 25*0.5*32
+
+		isEnemiesOnScreen := false
+
+		for _, e := range Enemies {
+			if e.X > playerMinX && e.X < playerMaxX && e.Y > playerMinY && e.Y < playerMaxY {
+				isEnemiesOnScreen = true
+				break
+			}
+		}
+
+		if isEnemiesOnScreen {
+			p.AttackTimerMs -= float32(tickIntervalms)
+			if p.AttackTimerMs < 0 {
+				p.AttackTimerMs += p.AttackIntervalMs
+
+				hitEnemies := make([]string, 0)
+
+				for _, e := range Enemies {
+
+					distSq := (e.X-p.X)*(e.X-p.X) + (e.Y-p.Y)*(e.Y-p.Y)
+					if distSq < p.AttackRadius*p.AttackRadius {
+						e.HP -= p.ATK
+
+						damageUpdate := DamageUpdate{
+							ID:     e.ID,
+							Type:   "enemy",
+							Damage: p.ATK,
+						}
+						damageUpdates = append(damageUpdates, damageUpdate)
+
+						hitEnemies = append(hitEnemies, e.ID)
+					}
+				}
+
+				attackUpdate := AttackUpdate{
+					AttackerID: p.ID,
+					HitIDs:     hitEnemies,
+					Type:       "playerAttack",
+					Radius:     p.AttackRadius,
+					X:          p.X,
+					Y:          p.Y,
+				}
+
+				attackUpdates = append(attackUpdates, attackUpdate)
+			}
+		}
+		mu.Unlock()
+	}
+
+	if len(attackUpdates) > 0 {
+		select {
+		case attackUpdateChan <- attackUpdates:
+			// log.Println("GameLoop sent updates for", len(playerUpdates), "players")
+		default:
+			log.Println("GameLoop updateChan full, skipping broadcast")
+		}
+	}
+
+	if len(damageUpdates) > 0 {
+		select {
+		case damageUpdateChan <- damageUpdates:
+			// log.Println("GameLoop sent updates for", len(playerUpdates), "players")
+		default:
+			log.Println("GameLoop updateChan full, skipping broadcast")
+		}
+	}
+
+}
+
+func removeEnemy(enemyID string) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	_, exists := Enemies[enemyID]
+	if !exists {
+		return // ✅ Enemy already removed, avoid crashing
+	}
+
+	log.Println("Removing enemy:", enemyID)
+
+	// Remove enemy from the map
+	delete(Enemies, enemyID)
+}
+
+func handleLogicEnemyMovement(tickInterval_ms int, timestamp int64) {
+	enemiesToRemove := make([]string, 0)
+
+	mu.Lock()
+	var enemyUpdates []EnemyUpdate
+	for _, e := range Enemies {
+		// Simple enemy movement (e.g., random or patrolling)
+		if rand.Intn(100) < 5 { // 5% chance to change direction each tick
+			e.VelocityX = float32(rand.Intn(3)-1) * 32 // -32 to 32 pixels per second
+			e.VelocityY = float32(rand.Intn(3)-1) * 32
+			if e.VelocityY < 0 {
+				e.Direction = 3 // back
+			} else if e.VelocityY > 0 {
+				e.Direction = 0 // front
+			} else if e.VelocityX > 0 {
+				e.Direction = 2 // right
+			} else if e.VelocityX < 0 {
+				e.Direction = 1 // left
+			}
+		}
+		e.X += e.VelocityX * float32(tickInterval_ms) * 0.001
+		e.Y += e.VelocityY * float32(tickInterval_ms) * 0.001
+
+		enemyUpdate := EnemyUpdate{
+			ID:        e.ID,
+			X:         e.X,
+			Y:         e.Y,
+			HP:        e.HP,
+			MaxHP:     e.MaxHP,
+			Type:      e.Type,
+			Timestamp: timestamp,
+			Direction: e.Direction,
+		}
+
+		if e.HP <= 0 {
+			enemiesToRemove = append(enemiesToRemove, e.ID)
+		}
+
+		enemyUpdates = append(enemyUpdates, enemyUpdate)
+	}
+	mu.Unlock()
+
+	if len(enemyUpdates) > 0 {
+		select {
+		case enemyUpdateChan <- enemyUpdates:
+			// log.Println("GameLoop sent updates for", len(playerUpdates), "players")
+		default:
+			log.Println("GameLoop updateChan full, skipping broadcast")
+		}
+	}
+
+	for _, etr := range enemiesToRemove {
+		removeEnemy(etr)
+	}
+}
+
+func BroadcastLoopPlayerUpdates(playerUpdateChan <-chan []PlayerUpdate) {
 	ticker := time.NewTicker(time.Duration(TICK_INTERVAL_MS) * time.Millisecond)
 	defer ticker.Stop()
 
 	for range ticker.C {
 		select {
-		case updates := <-updateChan:
-			mu.RLock()
+		case playerUpdates := <-playerUpdateChan:
+			mu.Lock()
 			for _, p := range players {
 				if err := p.Conn.WriteJSON(Message{
 					Type: "playerUpdates",
-					Data: mustMarshal(updates),
+					Data: mustMarshal(playerUpdates),
+				}); err != nil {
+					log.Println("Failed to broadcast player updates to", p.ID, ":", err)
+				} else {
+					// log.Println("Sent player updates to", p.ID, "count:", len(playerUpdates))
+				}
+			}
+			mu.Unlock()
+		default:
+			break
+		}
+	}
+}
+
+func BroadcastLoopEnemyUpdates(enemyUpdatechan <-chan []EnemyUpdate) {
+	ticker := time.NewTicker(time.Duration(TICK_INTERVAL_MS) * time.Millisecond)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		select {
+		case enemyUpdates := <-enemyUpdateChan:
+			mu.Lock()
+			for _, p := range players {
+				if err := p.Conn.WriteJSON(Message{
+					Type: "enemyUpdates",
+					Data: mustMarshal(enemyUpdates),
 				}); err != nil {
 					log.Println("Failed to broadcast player updates to", p.ID, ":", err)
 				} else {
 					// log.Println("Sent player updates to", p.ID, "count:", len(updates))
 				}
 			}
-			mu.RUnlock()
+			mu.Unlock()
+		default:
+			break
+		}
+	}
+}
+
+func BroadcastLoopAttackUpdates(attackUpdatechan <-chan []AttackUpdate) {
+	ticker := time.NewTicker(time.Duration(TICK_INTERVAL_MS) * time.Millisecond)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		select {
+		case attackUpdates := <-attackUpdateChan:
+			mu.Lock()
+			for _, p := range players {
+				if err := p.Conn.WriteJSON(Message{
+					Type: "attackUpdates",
+					Data: mustMarshal(attackUpdates),
+				}); err != nil {
+					log.Println("Failed to broadcast player updates to", p.ID, ":", err)
+				} else {
+					// log.Println("Sent player updates to", p.ID, "count:", len(updates))
+				}
+			}
+			mu.Unlock()
+		default:
+			break
+		}
+	}
+}
+
+func BroadcastLoopDamageUpdates(damageUpdatechan <-chan []DamageUpdate) {
+	ticker := time.NewTicker(time.Duration(TICK_INTERVAL_MS) * time.Millisecond)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		select {
+		case damageUpdates := <-damageUpdatechan:
+			mu.Lock()
+			for _, p := range players {
+				if err := p.Conn.WriteJSON(Message{
+					Type: "damageUpdates",
+					Data: mustMarshal(damageUpdates),
+				}); err != nil {
+					log.Println("Failed to broadcast player updates to", p.ID, ":", err)
+				} else {
+					// log.Println("Sent player updates to", p.ID, "count:", len(updates))
+				}
+			}
+			mu.Unlock()
 		default:
 			break
 		}
@@ -417,8 +667,17 @@ func calculateStats(brs int) (hp, atk, ap int, rgn, speed float32) {
 }
 
 func main() {
-	go GameLoop(updateChan)
-	go BroadcastLoop(updateChan)
+	// Load tilemap on server startup
+	if err := LoadTilemap(); err != nil {
+		log.Fatal("Failed to load tilemap:", err)
+	}
+
+	go GameLoop(playerUpdateChan)
+	go BroadcastLoopPlayerUpdates(playerUpdateChan)
+	go BroadcastLoopEnemyUpdates(enemyUpdateChan)
+	go BroadcastLoopAttackUpdates(attackUpdateChan)
+	go BroadcastLoopDamageUpdates(damageUpdateChan)
+	go HandleEnemyRespawns() // Start enemy respawn logic in a separate goroutine
 
 	http.HandleFunc("/ws", wsHandler)
 	log.Println("Server starting on :8080")
