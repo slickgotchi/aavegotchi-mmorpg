@@ -14,7 +14,11 @@ export interface Player {
         x: number,
         y: number,
         timestamp: number,
-    }[]
+    }[],
+    hp: number;
+    maxHp: number;
+    ap: number;
+    maxAp: number;
 }
 
 export class GameScene extends Phaser.Scene {
@@ -23,10 +27,6 @@ export class GameScene extends Phaser.Scene {
     private ws!: WebSocket;
     private keys!: { W: Phaser.Input.Keyboard.Key; A: Phaser.Input.Keyboard.Key; S: Phaser.Input.Keyboard.Key; D: Phaser.Input.Keyboard.Key; SPACE: Phaser.Input.Keyboard.Key };
     private enemies: { [id: string]: { sprite: Phaser.GameObjects.Sprite; hpBar: Phaser.GameObjects.Rectangle; maxHP: number } } = {};
-    private hpBar!: Phaser.GameObjects.Rectangle;
-    private apBar!: Phaser.GameObjects.Rectangle;
-    private hpText!: Phaser.GameObjects.Text;
-    private apText!: Phaser.GameObjects.Text;
     private stats = { hp: 0, maxHP: 0, atk: 0, ap: 0, maxAP: 0, rgn: 0 };
     private moveTimer = 0;
     private circlePool: Phaser.GameObjects.Graphics[] = [];
@@ -36,11 +36,15 @@ export class GameScene extends Phaser.Scene {
     private localPlayerID!: string;
     private followedPlayerID!: string;
 
-    // All game UI elements (not including connect/select UI) are added to this, which controls scroll(0), depth, and scaling
-    private uiContainer!: Phaser.GameObjects.Container;
+    public getPlayers() { return this.players; }
+    public getLocalPlayerID() { return this.localPlayerID; }
+
+    constructor() {
+        super('GameScene');
+    }
 
     preload() {
-        this.load.image('tileset', 'assets/tiles/tileset.png');
+        this.load.image('tileset-extruded', 'assets/tiles/tileset-extruded.png');
         this.load.tilemapTiledJSON('map', 'assets/exports/mmorpg.json');
         this.load.image('enemy-easy', '/assets/enemy-easy.png');
         this.load.image('enemy-medium', '/assets/enemy-medium.png');
@@ -53,10 +57,6 @@ export class GameScene extends Phaser.Scene {
 
         if (this.input.keyboard === null) return;
 
-        this.uiContainer = this.add.container(0, 0);
-        this.uiContainer.setScrollFactor(0);
-        this.uiContainer.setDepth(2000);
-
         this.keys = {
             W: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W),
             A: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.A),
@@ -68,17 +68,6 @@ export class GameScene extends Phaser.Scene {
         this.createTilemap();
 
         this.cursors = this.input.keyboard.createCursorKeys();
-
-        this.hpBar = this.add.rectangle(20, GAME_HEIGHT - 20 - (32 + 10), 450, 32, 0x00ff00)
-            .setOrigin(0, 1);
-        this.apBar = this.add.rectangle(20, GAME_HEIGHT - 20, 450, 32, 0x0000ff)
-            .setOrigin(0, 1);
-        this.hpText = this.add.text(20, GAME_HEIGHT - 20 - (32 + 10), 'HP: 0', { fontSize: '32px', color: '#000000' })
-            .setOrigin(0, 1);
-        this.apText = this.add.text(20, GAME_HEIGHT - 20, 'AP: 0', { fontSize: '32px', color: '#ffffff' })
-            .setOrigin(0, 1);
-
-        this.uiContainer.add([this.hpBar, this.apBar, this.hpText, this.apText]);
 
         for (let i = 0; i < 10; i++) {
             const circle = this.add.graphics();
@@ -153,43 +142,63 @@ export class GameScene extends Phaser.Scene {
         this.registry.get('game').events.on('selectGotchi', this.onGotchiSelected, this);
     }
 
-    createTilemap() {
-        const map = this.make.tilemap({ key: 'map' });
-        if (!map) {
-            console.error('Tilemap failed to load');
-            return;
-        }
-        console.log('Tilemap loaded successfully');
-
-        const tileset = map.addTilesetImage('tileset', 'tileset', 32, 32);
-        if (!tileset) {
-            console.error('Tileset not found or invalid in map');
-            return;
-        }
-        console.log('Tileset added successfully, tile width:', tileset.tileWidth, 'tile height:', tileset.tileHeight);
-
-        console.log('Available layers:', map.layers.map(l => l.name));
-        const layer = map.createLayer('ground', tileset, 0, 0);
-        if (layer) {
-            layer.setScale(1);
-            layer.setDepth(0);
-            layer.setVisible(true); // Ensure layer is visible on first load
-            console.log('Layer "ground" created successfully at depth 0');
-        } else {
-            console.error('Layer "ground" creation failed');
-            return;
-        }
-
-        this.cameras.main.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
-
-        // Use a transparent rectangle to follow the camera, centering on (560*32/2, 350*32/2)
-        const initialCameraFollow = this.add.rectangle(560 * 32 / 2, 350 * 32 / 2, 20, 20, 0xff0000)
-            .setOrigin(0.5, 0.5)
-            .setAlpha(0); // Invisible
-        this.cameras.main.startFollow(initialCameraFollow);
-
-        console.log('Camera set up with bounds:', map.widthInPixels, map.heightInPixels, ' and x: ', this.cameras.main.x, ', y: ', this.cameras.main.y);
+createTilemap() {
+    const map = this.make.tilemap({ key: 'map' });
+    if (!map) {
+        console.error('Tilemap failed to load');
+        return;
     }
+    console.log('Tilemap loaded successfully');
+
+    const tileset = map.addTilesetImage('tileset', 'tileset-extruded', 32, 32, 5, 10);
+    if (!tileset) {
+        console.error('Tileset not found or invalid in map');
+        return;
+    }
+    console.log('Tileset added successfully, tile width:', tileset.tileWidth, 'tile height:', tileset.tileHeight);
+
+    console.log('Available layers:', map.layers.map(l => l.name));
+
+    // Loop through all layers dynamically
+    map.layers.forEach((layerData, index) => {
+        const layerName = layerData.name;
+
+        // Safely access properties and check for 'isHidden' property
+        const isHidden = (layerData.properties as Array<{ name: string, value: any }>)?.find((prop) => prop.name === 'isHidden')?.value === true;
+        if (isHidden) {
+            console.log(`Skipping hidden layer: ${layerName}`);
+            return;
+        }
+
+        // Create the layer if it's not hidden
+        const layer = map.createLayer(layerName, tileset, 0, 0);
+        if (layer) {
+            // Dynamically set depth based on layer order (top layers should have higher depth)
+            layer.setDepth(map.layers.length - index); // Layers at the top get higher depth values
+            layer.setVisible(true);
+            console.log(`Layer "${layerName}" created successfully at depth ${map.layers.length - index}`);
+        } else {
+            console.error(`Layer "${layerName}" creation failed`);
+        }
+    });
+
+    // Set up camera bounds
+    this.cameras.main.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
+
+    // Dynamically center camera follow based on tilemap size
+    const centerX = map.widthInPixels / 2;
+    const centerY = map.heightInPixels / 2;
+
+    const initialCameraFollow = this.add.rectangle(centerX, centerY, 20, 20, 0xff0000)
+        .setOrigin(0.5, 0.5)
+        .setAlpha(0); // Invisible
+
+    this.cameras.main.startFollow(initialCameraFollow);
+
+    console.log(`Camera set up with bounds: ${map.widthInPixels}x${map.heightInPixels}, following (${centerX}, ${centerY})`);
+}
+
+    
 
     onGotchiSelected(gotchi: Aavegotchi) {
         console.log('Gotchi Selected in GameScene:', gotchi);
@@ -214,7 +223,7 @@ export class GameScene extends Phaser.Scene {
         // NEW PLAYER
         if (!this.players[data.id]) {
             var newPlayerSprite = this.add.sprite(data.x, data.y, 'gotchi_placeholder')
-                .setDepth(1)
+                .setDepth(1000)
                 .setScale(1) // Ensure 64x64 size
                 .setName(data.id);
 
@@ -223,6 +232,10 @@ export class GameScene extends Phaser.Scene {
                 gotchiId: data.gotchiId,
                 isAssignedSVG: false,
                 positionBuffer: [],
+                hp: data.hp,
+                maxHp: data.maxHp,
+                ap: data.ap,
+                maxAp: data.maxAp,
             } 
 
             console.log(`Added placeholder player ${data.id} at (${data.x}, ${data.y})`);
@@ -301,7 +314,7 @@ export class GameScene extends Phaser.Scene {
                     
                     // Create the sprite using the "front" view by default
                     this.players[playerID].sprite = this.add.sprite(x, y, `gotchi-${gotchiId}-front`)
-                        .setDepth(1)
+                        .setDepth(1000)
                         .setScale(0.5) // Ensure 64x64 size
                         .setName(playerID);
                     
@@ -324,12 +337,6 @@ export class GameScene extends Phaser.Scene {
             delete this.players[id];
             console.log(`Removed player ${id}`);
         }
-    }
-
-    handleStats(data: any) {
-        this.stats = data;
-        this.updateBars();
-        console.log(`Stats updated for ${data.id}: HP ${data.hp}/${data.maxHP}, AP ${data.ap}/${data.maxAP}`);
     }
 
     handleEnemyUpdates(data: any) {
@@ -373,13 +380,7 @@ export class GameScene extends Phaser.Scene {
             y >= view.top - buffer && y <= view.bottom + buffer;
     }
 
-    updateBars() {
-        this.hpBar.width = 450 * (this.stats.hp / this.stats.maxHP);
-        this.apBar.width = 450 * (this.stats.ap / this.stats.maxAP);
-        this.hpText.setText(`HP: ${this.stats.hp}/${this.stats.maxHP}`);
-        this.apText.setText(`AP: ${Math.floor(this.stats.ap)}/${this.stats.maxAP}`);
-        console.log('Updated HP/AP bars:', this.stats.hp, '/', this.stats.maxHP, 'AP:', this.stats.ap, '/', this.stats.maxAP);
-    }
+    
 
     updateEnemyHP(id: string, hp: number) {
         if (this.enemies[id]) {
@@ -417,7 +418,7 @@ export class GameScene extends Phaser.Scene {
         if (data.playerHP || data.playerAP) {
             this.stats.hp = data.playerHP || this.stats.hp;
             this.stats.ap = data.playerAP || this.stats.ap;
-            this.updateBars();
+            // this.updateBars();
         }
     }
 
@@ -529,9 +530,6 @@ export class GameScene extends Phaser.Scene {
         const zoom = Math.min(zoomX, zoomY);
 
         this.cameras.main.setZoom(zoom*1.5);
-
-        // Scale UI properly, preserving Phaser game window styling
-        this.uiContainer.setPosition(-(GAME_WIDTH - newWidth) * 0.5, -(GAME_HEIGHT - newHeight) * 0.5);
 
         // Center the Phaser canvas manually
         const canvas = this.game.canvas;

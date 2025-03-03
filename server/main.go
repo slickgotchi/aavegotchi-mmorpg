@@ -68,10 +68,13 @@ type Input struct {
 }
 
 var (
-	players    = make(map[string]*Player)
-	inputChan  = make(chan Input, 10000)
-	updateChan = make(chan []PlayerUpdate, 1000)
-	mu         sync.RWMutex
+	players          = make(map[string]*Player)
+	updateChan       = make(chan []PlayerUpdate, 1000)
+	mu               sync.RWMutex
+	TICK_INTERVAL_MS int = 100
+	MAP_WIDTH_TILES  int = 400
+	MAP_HEIGHT_TILES int = 300
+	PIXELS_PER_TILE  int = 32
 )
 
 func wsHandler(w http.ResponseWriter, r *http.Request) {
@@ -85,15 +88,15 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 	// create a new player
 	p := &Player{
 		ID:        r.RemoteAddr,
-		X:         8960,
-		Y:         5600,
+		X:         float32(MAP_WIDTH_TILES*PIXELS_PER_TILE) / 2,
+		Y:         float32(MAP_HEIGHT_TILES*PIXELS_PER_TILE) / 2,
 		HP:        100,
 		MaxHP:     100,
 		ATK:       10,
 		AP:        100,
 		MaxAP:     100,
 		RGN:       1.0,
-		Speed:     200,
+		Speed:     5 * 32,
 		Conn:      conn,
 		GotchiID:  0, // we set GotchiID after 'join' message is received
 		IsPlaying: false,
@@ -136,7 +139,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			broadcastMessage(disconnectMsg, "")
 		}()
 
-		// read essages into our input channel
+		// handle messages as soon as received
 		for {
 			_, msg, err := p.Conn.ReadMessage()
 			if err != nil {
@@ -150,11 +153,16 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
+			// we handle messages immediately because relying on an input channel
+			// can lead to time discrepancies in our core game loop.
+			// the process is to:
+			// - handle input immediately
+			// - process game logic at the fixed game interval
 			switch m.Type {
 			case "join":
-				HandleMessage_Join(p.ID, m)
+				handlePlayerMessageJoin(p, m)
 			case "input":
-				HandleMessage_Input(p.ID, m)
+				handlePlayerMessageInput(p, m)
 			default:
 			}
 		}
@@ -163,24 +171,20 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 	<-make(chan struct{})
 }
 
-func HandleMessage_Join(playerId string, msg Message) {
+func handlePlayerMessageJoin(p *Player, msg Message) {
 	var joinData struct {
 		GotchiID int `json:"gotchiId"`
 	}
 	if err := json.Unmarshal(msg.Data, &joinData); err != nil || joinData.GotchiID == 0 {
-		log.Println("Invalid join data from", playerId, ":", err)
+		log.Println("Invalid join data from", p.ID, ":", err)
 		return
 	}
 
-	mu.RLock()
-	p := players[playerId]
-	mu.RUnlock()
-
+	mu.Lock()
 	p.GotchiID = joinData.GotchiID
+	mu.Unlock()
 
 	log.Println("Player joined with GotchiID:", p.GotchiID)
-
-	log.Println("Calculating stats")
 
 	brs, err := fetchGotchiStats(strconv.Itoa(joinData.GotchiID))
 	if err != nil {
@@ -188,18 +192,17 @@ func HandleMessage_Join(playerId string, msg Message) {
 		return
 	}
 
+	mu.Lock()
 	p.HP, p.ATK, p.AP, p.RGN, p.Speed = calculateStats(brs)
 	p.MaxHP, p.MaxAP = p.HP, p.AP
 	p.IsPlaying = true
-	p.X = 8960
-	p.Y = 5600
-
-	mu.Lock()
-	players[p.ID] = p
+	p.X = float32(MAP_WIDTH_TILES*PIXELS_PER_TILE) / 2
+	p.Y = float32(MAP_HEIGHT_TILES*PIXELS_PER_TILE) / 2
+	p.Direction = 0
 	mu.Unlock()
 }
 
-func HandleMessage_Input(playerId string, msg Message) {
+func handlePlayerMessageInput(p *Player, msg Message) {
 	var inputData struct {
 		ID   string `json:"id"`
 		Keys struct {
@@ -211,13 +214,11 @@ func HandleMessage_Input(playerId string, msg Message) {
 		} `json:"keys"`
 	}
 	if err := json.Unmarshal(msg.Data, &inputData); err != nil {
-		log.Println("Failed to unmarshal input for", playerId, ":", err)
+		log.Println("Failed to unmarshal input for", p.ID, ":", err)
 		return
 	}
 
-	mu.RLock()
-	p := players[playerId]
-	mu.RUnlock()
+	mu.Lock()
 
 	vx, vy := float32(0), float32(0)
 	if inputData.Keys.W {
@@ -234,8 +235,6 @@ func HandleMessage_Input(playerId string, msg Message) {
 	}
 	if vx != 0 || vy != 0 {
 		norm := float32(math.Sqrt(float64(vx*vx + vy*vy)))
-		// p.X += (vx / norm) * p.Speed * 0.1
-		// p.Y += (vy / norm) * p.Speed * 0.1
 
 		p.VelocityX = (vx / norm) * p.Speed
 		p.VelocityY = (vy / norm) * p.Speed
@@ -259,19 +258,16 @@ func HandleMessage_Input(playerId string, msg Message) {
 		p.VelocityY = 0
 	}
 
-	mu.Lock()
-	players[p.ID] = p
 	mu.Unlock()
 }
 
-func GameLoop(inputChan <-chan Input, updateChan chan<- []PlayerUpdate) {
-	ticker := time.NewTicker(100 * time.Millisecond)
+func GameLoop(updateChan chan<- []PlayerUpdate) {
+	ticker := time.NewTicker(time.Duration(TICK_INTERVAL_MS) * time.Millisecond)
 	defer func() {
 		log.Println("GameLoop ticker stopped")
 		ticker.Stop()
 	}()
 
-	// var lastTime time.Time
 	for range ticker.C {
 		mu.RLock()
 		playerCount := len(players)
@@ -281,52 +277,49 @@ func GameLoop(inputChan <-chan Input, updateChan chan<- []PlayerUpdate) {
 			continue
 		}
 
-		// log.Println(time.Now().UnixMilli())
+		// handle all tick logic
+		handleLogicPlayerMovement(TICK_INTERVAL_MS, time.Now().UnixMilli())
 
-		timestamp := time.Now().UnixMilli()
+	}
+}
 
-		// log.Println(time.Now().UnixMilli())
-		mu.RLock()
-		var playerUpdates []PlayerUpdate
-		for _, p := range players {
+func handleLogicPlayerMovement(tickInterval_ms int, timestamp int64) {
+	mu.RLock()
+	var playerUpdates []PlayerUpdate
+	for _, p := range players {
+		// update player position
+		p.X += p.VelocityX * float32(tickInterval_ms) * 0.001
+		p.Y += p.VelocityY * float32(tickInterval_ms) * 0.001
 
-			// update player position
-			p.X += p.VelocityX * 0.1
-			p.Y += p.VelocityY * 0.1
-
-			playerUpdate := PlayerUpdate{
-				ID:        p.ID,
-				X:         p.X,
-				Y:         p.Y,
-				HP:        p.HP,
-				MaxHP:     p.MaxHP,
-				AP:        p.AP,
-				MaxAP:     p.MaxAP,
-				GotchiID:  p.GotchiID,
-				Timestamp: timestamp,
-				Direction: p.Direction,
-			}
-
-			// log.Println(time.Now().UnixMilli())
-
-			playerUpdates = append(playerUpdates, playerUpdate)
-			// log.Println("added player update: ", playerUpdate)
+		playerUpdate := PlayerUpdate{
+			ID:        p.ID,
+			X:         p.X,
+			Y:         p.Y,
+			HP:        p.HP,
+			MaxHP:     p.MaxHP,
+			AP:        p.AP,
+			MaxAP:     p.MaxAP,
+			GotchiID:  p.GotchiID,
+			Timestamp: timestamp,
+			Direction: p.Direction,
 		}
-		mu.RUnlock()
 
-		if len(playerUpdates) > 0 {
-			select {
-			case updateChan <- playerUpdates:
-				// log.Println("GameLoop sent updates for", len(playerUpdates), "players")
-			default:
-				log.Println("GameLoop updateChan full, skipping broadcast")
-			}
+		playerUpdates = append(playerUpdates, playerUpdate)
+	}
+	mu.RUnlock()
+
+	if len(playerUpdates) > 0 {
+		select {
+		case updateChan <- playerUpdates:
+			// log.Println("GameLoop sent updates for", len(playerUpdates), "players")
+		default:
+			log.Println("GameLoop updateChan full, skipping broadcast")
 		}
 	}
 }
 
 func BroadcastLoop(updateChan <-chan []PlayerUpdate) {
-	ticker := time.NewTicker(100 * time.Millisecond)
+	ticker := time.NewTicker(time.Duration(TICK_INTERVAL_MS) * time.Millisecond)
 	defer ticker.Stop()
 
 	for range ticker.C {
@@ -415,16 +408,16 @@ func fetchGotchiStats(gotchiId string) (int, error) {
 }
 
 func calculateStats(brs int) (hp, atk, ap int, rgn, speed float32) {
-	hp = brs * 2
-	atk = brs / 5
-	ap = brs
+	hp = brs
+	atk = brs / 10
+	ap = brs / 2
 	rgn = float32(brs) / 100
-	speed = 200
+	speed = 5 * 32
 	return
 }
 
 func main() {
-	go GameLoop(inputChan, updateChan)
+	go GameLoop(updateChan)
 	go BroadcastLoop(updateChan)
 
 	http.HandleFunc("/ws", wsHandler)

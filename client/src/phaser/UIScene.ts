@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { fetchAavegotchis, Aavegotchi } from './FetchGotchis';
 import { ethers } from 'ethers';
+import { GameScene, Player } from './GameScene';
 
 const GAME_WIDTH = 1920;
 const GAME_HEIGHT = 1200;
@@ -11,6 +12,11 @@ export class UIScene extends Phaser.Scene {
     private connectText!: Phaser.GameObjects.Text;
     private gotchiSelectList!: Phaser.GameObjects.Container;
     private selectedGotchiText!: Phaser.GameObjects.Text;
+
+    private hpBar!: Phaser.GameObjects.Rectangle;
+    private apBar!: Phaser.GameObjects.Rectangle;
+    private hpText!: Phaser.GameObjects.Text;
+    private apText!: Phaser.GameObjects.Text;
 
     constructor() {
         super('UIScene');
@@ -42,6 +48,17 @@ export class UIScene extends Phaser.Scene {
             .setVisible(false);
         this.uiContainer.add(this.selectedGotchiText);
 
+        this.hpBar = this.add.rectangle(20, GAME_HEIGHT - 20 - (32 + 10), 450, 32, 0x00ff00)
+            .setOrigin(0, 1);
+        this.apBar = this.add.rectangle(20, GAME_HEIGHT - 20, 450, 32, 0x0000ff)
+            .setOrigin(0, 1);
+        this.hpText = this.add.text(20, GAME_HEIGHT - 20 - (32 + 10), 'HP: 0', { fontSize: '32px', color: '#000000' })
+            .setOrigin(0, 1);
+        this.apText = this.add.text(20, GAME_HEIGHT - 20, 'AP: 0', { fontSize: '32px', color: '#ffffff' })
+            .setOrigin(0, 1);
+
+        this.uiContainer.add([this.hpBar, this.apBar, this.hpText, this.apText]);
+
         // Listen for registry changes from App.tsx
         this.registry.events.on('changedata-account', this.updateUI, this);
         this.registry.events.on('changedata-gotchis', this.updateUI, this);
@@ -51,6 +68,23 @@ export class UIScene extends Phaser.Scene {
 
         this.resizeGame();
         window.addEventListener('resize', () => this.resizeGame());
+    }
+
+    update() {
+        // update local stat bar
+        const gameScene = this.scene.get("GameScene") as GameScene;
+        if (!gameScene) return;
+
+        const players = gameScene.getPlayers();
+        if (!players) return;
+
+        const localPlayerId = gameScene.getLocalPlayerID();
+        if (!localPlayerId) return;
+
+        const localPlayer = players[localPlayerId];
+        if (!localPlayer) return;
+        
+        this.updateLocalStatBars(localPlayer);
     }
 
     updateUI() {
@@ -91,6 +125,16 @@ export class UIScene extends Phaser.Scene {
             this.selectedGotchiText.setVisible(true);
             this.selectedGotchiText.setText(`Playing as: ${selectedGotchi.name}`);
         }
+
+
+    }
+
+    updateLocalStatBars(player: Player) {
+        this.hpBar.width = 450 * (player.hp / player.maxHp);
+        this.apBar.width = 450 * (player.ap / player.maxAp);
+        this.hpText.setText(`HP: ${player.hp}/${player.maxHp}`);
+        this.apText.setText(`AP: ${Math.floor(player.ap)}/${player.maxAp}`);
+        // console.log('Updated HP/AP bars:', this.stats.hp, '/', this.stats.maxHP, 'AP:', this.stats.ap, '/', this.stats.maxAP);
     }
 
     connectWallet = async () => {
@@ -114,6 +158,8 @@ export class UIScene extends Phaser.Scene {
             console.error('MetaMask not detected');
         }
     };
+
+
 
     selectGotchi(gotchi: Aavegotchi) {
         // Update registry to trigger App.tsx and GameScene

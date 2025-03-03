@@ -23,7 +23,8 @@ function App() {
             scale: {
                 mode: Phaser.Scale.NONE, // Preserve existing scale mode as requested
                 // autoCenter: Phaser.Scale.CENTER_HORIZONTALLY
-            }
+            },
+            pixelArt: true,
         };
 
         if (!gameRef.current) {
