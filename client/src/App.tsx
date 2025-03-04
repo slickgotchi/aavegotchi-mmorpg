@@ -5,12 +5,16 @@ import { GameScene } from './phaser/GameScene';
 import { fetchAavegotchis, Aavegotchi, calculateBRS } from './phaser/FetchGotchis';
 import { UIScene } from './phaser/UIScene';
 
+const GAME_WIDTH = 1920;
+const GAME_HEIGHT = 1200;
+
 function App() {
     const gameRef = useRef<Phaser.Game | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const [account, setAccount] = useState<string | null>(null);
     const [gotchis, setGotchis] = useState<Aavegotchi[]>([]);
     const [selectedGotchi, setSelectedGotchi] = useState<Aavegotchi | null>(null);
+    const [gameDimensions, setGameDimensions] = useState({ width: GAME_WIDTH, height: GAME_HEIGHT });
 
     useEffect(() => {
         if (!containerRef.current) return;

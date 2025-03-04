@@ -57,6 +57,7 @@ export async function fetchAavegotchis(account: string): Promise<Aavegotchi[]> {
         throw new Error('No Aavegotchis found in core subgraph');
     }
 
+    /*
     const svgQuery = `
     query ($ids: [ID!]!) {
       aavegotchis(where: { id_in: $ids }) {
@@ -91,12 +92,14 @@ export async function fetchAavegotchis(account: string): Promise<Aavegotchi[]> {
         right: removeBackgroundFromSVG(g.right || g.svg),
         back: removeBackgroundFromSVG(g.back || g.svg),
     }]));
+    */
 
     return coreData.data.aavegotchis.map((g: any) => ({
         id: Number(g.id),
         name: g.name,
         modifiedNumericTraits: g.modifiedNumericTraits.map(Number),
-        svgs: gotchisMap.get(g.id) || { front: '', left: '', right: '', back: '' },
+        svgs: {}
+        // svgs: gotchisMap.get(g.id) || { front: '', left: '', right: '', back: '' },
     }));
 }
 
