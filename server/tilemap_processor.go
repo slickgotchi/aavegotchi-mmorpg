@@ -47,33 +47,6 @@ type TilePosition struct {
 	Y int
 }
 
-type Enemy struct {
-	ID          string
-	X           float32 // In pixels
-	Y           float32 // In pixels
-	Type        string
-	LayerName   string // Reference to the enemy layer it belongs to
-	HP          int
-	MaxHP       int
-	RespawnTime int64 // Unix timestamp in milliseconds for respawn
-	IsAlive     bool
-	VelocityX   float32
-	VelocityY   float32
-	Direction   int // 0 = front, 1 = left, 2 = right, 3 = back
-}
-
-// EnemyUpdate struct for broadcasting enemy state to clients
-type EnemyUpdate struct {
-	ID        string  `json:"id"`
-	X         float32 `json:"x"`
-	Y         float32 `json:"y"`
-	HP        int     `json:"hp"`
-	MaxHP     int     `json:"maxHp"`
-	Type      string  `json:"type"`
-	Timestamp int64   `json:"timestamp"`
-	Direction int     `json:"direction"`
-}
-
 // Global variables for tilemap processor (scoped to package)
 var (
 	enemyLayers = make(map[string]*EnemyLayer)

@@ -1,3 +1,4 @@
+/*
 import Phaser from 'phaser';
 import { fetchAavegotchis, Aavegotchi } from './FetchGotchis';
 import { ethers } from 'ethers';
@@ -171,6 +172,9 @@ export class UIScene extends Phaser.Scene {
     }
 
     resizeGame() {
+        
+        if (!this.cameras || !this.cameras.main) return;
+
         const availableWidth = window.innerWidth;
         const availableHeight = window.innerHeight;
         const aspectRatio = 16 / 10;
@@ -187,12 +191,14 @@ export class UIScene extends Phaser.Scene {
         const zoomY = newHeight / GAME_HEIGHT;
         const zoom = Math.min(zoomX, zoomY);
 
+        console.log(zoom);
         this.cameras.main.setZoom(zoom);
 
         // Scale UI properly, preserving Phaser game window styling
         this.uiContainer.setPosition(-(GAME_WIDTH - newWidth) * 0.5, -(GAME_HEIGHT - newHeight) * 0.5);
 
         console.log('Resized game to width:', newWidth, 'height:', newHeight);
+        
     }
 }
 
@@ -202,3 +208,4 @@ export class UIScene extends Phaser.Scene {
 function calculateBRS(traits: number[]): number {
     return traits.reduce((sum, trait) => sum + trait, 0);
 }
+*/

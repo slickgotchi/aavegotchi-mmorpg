@@ -6,3 +6,12 @@ html, body {
     height: 100vh;
     background-color: #242424;
 }
+
+/* src/index.css */
+@font-face {
+    font-family: 'Pixelar';
+    src: url('./assets/fonts/pixelar/PixelarRegular.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap; /* Optional: Ensures text is visible while font loads */
+  }

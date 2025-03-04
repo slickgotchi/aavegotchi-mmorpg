@@ -65,8 +65,6 @@ export class GameScene extends Phaser.Scene {
     }
 
     create() {
-        this.registry.set('game', this);
-
         if (this.input.keyboard === null) return;
 
         this.keys = {
@@ -152,7 +150,7 @@ export class GameScene extends Phaser.Scene {
         window.addEventListener('resize', () => this.resizeGame());
 
         // Start the UI scene
-        this.scene.launch('UIScene');
+        // this.scene.launch('UIScene');
 
         // Listen for selectGotchi event
         this.registry.get('game').events.on('selectGotchi', this.onGotchiSelected, this);
@@ -187,7 +185,7 @@ export class GameScene extends Phaser.Scene {
                 direction: data.direction, // Add direction if enemies have animations
             };
 
-            console.log(`Added enemy ${data.id} at (${data.x}, ${data.y}) with type ${data.type}`);
+            // console.log(`Added enemy ${data.id} at (${data.x}, ${data.y}) with type ${data.type}`);
         }
 
         // MOVE EXISTING ENEMY
@@ -285,12 +283,12 @@ export class GameScene extends Phaser.Scene {
     }
 
     handleAttackUpdates(data: any) {
-        console.log(data);
+        // console.log(data);
         const radius = data.radius;
         const x = data.x;
         const y = data.y;
     
-        console.log("attack animation at x: ", x, ", y: ", y, ", radius: ", radius);
+        // console.log("attack animation at x: ", x, ", y: ", y, ", radius: ", radius);
     
         // Get a pooled circle (or create one if none available)
         const circle = this.getPooledCircle(x, y, radius, 0xffffff); // White circle
@@ -670,6 +668,8 @@ export class GameScene extends Phaser.Scene {
     }
 
     resizeGame() {
+        if (!this.cameras.main || !this.scale) return;
+
         const availableWidth = window.innerWidth;
         const availableHeight = window.innerHeight;
         const aspectRatio = 16 / 10;
