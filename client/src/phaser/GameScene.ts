@@ -265,7 +265,7 @@ export class GameScene extends Phaser.Scene {
             this.enemies[id].container.destroy();
             this.enemies[id].hpBar.destroy();
             delete this.enemies[id];
-            console.log(`Removed enemy ${id}`);
+            // console.log(`Removed enemy ${id}`);
         }
     }
 
@@ -289,9 +289,11 @@ export class GameScene extends Phaser.Scene {
         const y = data.y;
     
         // console.log("attack animation at x: ", x, ", y: ", y, ", radius: ", radius);
+
+        const attackColor = data.type == "playerAttack" ? 0xffffff : 0xff0000;
     
         // Get a pooled circle (or create one if none available)
-        const circle = this.getPooledCircle(x, y, radius, 0xffffff); // White circle
+        const circle = this.getPooledCircle(x, y, radius, attackColor); // White circle
         circle.setAlpha(0.5).setVisible(true);
         circle.setDepth(900);
     
@@ -300,8 +302,8 @@ export class GameScene extends Phaser.Scene {
         const rectHeight = radius * 0.1; // Thin width (20% of radius)
         
         // Position rectangle so **one end is at (0,0)** and it extends outward
-        const rectangle = this.add.rectangle(radius / 2, 0, rectWidth, rectHeight, 0x808080);
-        rectangle.setAlpha(0.6);
+        const rectangle = this.add.rectangle(radius *0.75, 0, rectWidth*0.5, rectHeight, attackColor);
+        rectangle.setAlpha(0.9);
     
         // Create a container at the attack center
         const container = this.add.container(x, y, [rectangle]);
@@ -481,6 +483,10 @@ export class GameScene extends Phaser.Scene {
                 console.log("follow player at position: ", this.players[data.id].sprite.x, this.players[data.id].sprite.y);
                 this.cameras.main.startFollow(this.players[data.id].sprite, true);
             }
+
+            // update hp
+            this.players[data.id].hp = data.hp;
+            console.log(data.hp);
         }
     }
 

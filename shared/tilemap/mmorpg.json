@@ -945,7 +945,7 @@
                         }, 
                         {
                          "name":"respawnInterval_s",
-                         "type":"int",
+                         "type":"float",
                          "value":300
                         }, 
                         {

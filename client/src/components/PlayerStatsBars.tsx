@@ -19,18 +19,21 @@ export function PlayerStatsBars({ gameRef, gameDimensions }: PlayerStatsBarsProp
     useEffect(() => {
         const updateStats = () => {
             if (gameRef.current) {
-                const gameScene = gameRef.current.scene.getScene('GameScene') as any; // Adjust type if needed
+                const gameScene = gameRef.current.scene.getScene('GameScene') as any;
                 if (gameScene && gameScene.getPlayers && gameScene.getLocalPlayerID) {
                     const players = gameScene.getPlayers();
                     const localPlayerId = gameScene.getLocalPlayerID();
                     if (players && localPlayerId && players[localPlayerId]) {
-                        setPlayerStats(players[localPlayerId]);
+                        // Create a new object to ensure React detects the change
+                        const newStats = { ...players[localPlayerId] };
+                        setPlayerStats(newStats);
+                        console.log("HP:", newStats.hp, "MaxHP:", newStats.maxHp);
                     }
                 }
             }
         };
 
-        // Poll or listen for changes (simplified polling for now)
+        // Poll for changes
         const interval = setInterval(updateStats, 100);
         return () => clearInterval(interval);
     }, [gameRef]);
@@ -50,12 +53,12 @@ export function PlayerStatsBars({ gameRef, gameDimensions }: PlayerStatsBarsProp
             style={{
                 position: 'absolute',
                 left: `${finalX}px`,
-                top: `${finalY - barHeight * 2 - 10 * scale}px`, // Stack HP above AP
+                top: `${finalY - barHeight * 2 - 10 * scale}px`,
                 zIndex: 2000,
                 display: 'flex',
                 flexDirection: 'column',
-                gap: `${10 * scale}px`, // Space between HP and AP bars
-                fontFamily: 'Pixelar'
+                gap: `${10 * scale}px`,
+                fontFamily: 'Pixelar',
             }}
         >
             {/* HP Bar and Text */}
@@ -79,10 +82,10 @@ export function PlayerStatsBars({ gameRef, gameDimensions }: PlayerStatsBarsProp
                         position: 'absolute',
                         left: '50%',
                         top: '50%',
-                        transform: 'translate(-50%, -50%)', // Center text horizontally and vertically
+                        transform: 'translate(-50%, -50%)',
                         color: 'white',
                         fontSize: `${32 * scale}px`,
-                        whiteSpace: 'nowrap', // Prevent text wrapping
+                        whiteSpace: 'nowrap',
                     }}
                 >
                     {playerStats.hp}/{playerStats.maxHp}
@@ -110,10 +113,10 @@ export function PlayerStatsBars({ gameRef, gameDimensions }: PlayerStatsBarsProp
                         position: 'absolute',
                         left: '50%',
                         top: '50%',
-                        transform: 'translate(-50%, -50%)', // Center text horizontally and vertically
+                        transform: 'translate(-50%, -50%)',
                         color: 'white',
                         fontSize: `${32 * scale}px`,
-                        whiteSpace: 'nowrap', // Prevent text wrapping
+                        whiteSpace: 'nowrap',
                     }}
                 >
                     {Math.floor(playerStats.ap)}/{playerStats.maxAp}

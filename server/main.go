@@ -5,7 +5,8 @@ import (
 	"encoding/json"
 	"log"
 	"math"
-	"math/rand"
+
+	// "math/rand"
 	"net/http"
 	"strconv"
 	"sync"
@@ -62,6 +63,7 @@ type PlayerUpdate struct {
 	Direction int     `json:"direction"`
 }
 
+/*
 type Enemy struct {
 	ID          string
 	X           float32 // In pixels
@@ -76,6 +78,7 @@ type Enemy struct {
 	VelocityY   float32
 	Direction   int // 0 = front, 1 = left, 2 = right, 3 = back
 }
+*/
 
 // EnemyUpdate struct for broadcasting enemy state to clients
 type EnemyUpdate struct {
@@ -466,59 +469,62 @@ func removeEnemy(enemyID string) {
 }
 
 func handleLogicEnemyMovement(tickInterval_ms int, timestamp int64) {
-	enemiesToRemove := make([]string, 0)
+	UpdateEnemies(tickInterval_ms, timestamp)
+	/*
+		enemiesToRemove := make([]string, 0)
 
-	mu.Lock()
-	var enemyUpdates []EnemyUpdate
-	for _, e := range Enemies {
-		// Simple enemy movement (e.g., random or patrolling)
-		if rand.Intn(100) < 5 { // 5% chance to change direction each tick
-			e.VelocityX = float32(rand.Intn(3)-1) * 32 // -32 to 32 pixels per second
-			e.VelocityY = float32(rand.Intn(3)-1) * 32
-			if e.VelocityY < 0 {
-				e.Direction = 3 // back
-			} else if e.VelocityY > 0 {
-				e.Direction = 0 // front
-			} else if e.VelocityX > 0 {
-				e.Direction = 2 // right
-			} else if e.VelocityX < 0 {
-				e.Direction = 1 // left
+		mu.Lock()
+		var enemyUpdates []EnemyUpdate
+		for _, e := range Enemies {
+			// Simple enemy movement (e.g., random or patrolling)
+			if rand.Intn(100) < 5 { // 5% chance to change direction each tick
+				e.VelocityX = float32(rand.Intn(3)-1) * 32 // -32 to 32 pixels per second
+				e.VelocityY = float32(rand.Intn(3)-1) * 32
+				if e.VelocityY < 0 {
+					e.Direction = 3 // back
+				} else if e.VelocityY > 0 {
+					e.Direction = 0 // front
+				} else if e.VelocityX > 0 {
+					e.Direction = 2 // right
+				} else if e.VelocityX < 0 {
+					e.Direction = 1 // left
+				}
+			}
+			e.X += e.VelocityX * float32(tickInterval_ms) * 0.001
+			e.Y += e.VelocityY * float32(tickInterval_ms) * 0.001
+
+			enemyUpdate := EnemyUpdate{
+				ID:        e.ID,
+				X:         e.X,
+				Y:         e.Y,
+				HP:        e.HP,
+				MaxHP:     e.MaxHP,
+				Type:      e.Type,
+				Timestamp: timestamp,
+				Direction: e.Direction,
+			}
+
+			if e.HP <= 0 {
+				enemiesToRemove = append(enemiesToRemove, e.ID)
+			}
+
+			enemyUpdates = append(enemyUpdates, enemyUpdate)
+		}
+		mu.Unlock()
+
+		if len(enemyUpdates) > 0 {
+			select {
+			case enemyUpdateChan <- enemyUpdates:
+				// log.Println("GameLoop sent updates for", len(playerUpdates), "players")
+			default:
+				log.Println("GameLoop updateChan full, skipping broadcast")
 			}
 		}
-		e.X += e.VelocityX * float32(tickInterval_ms) * 0.001
-		e.Y += e.VelocityY * float32(tickInterval_ms) * 0.001
 
-		enemyUpdate := EnemyUpdate{
-			ID:        e.ID,
-			X:         e.X,
-			Y:         e.Y,
-			HP:        e.HP,
-			MaxHP:     e.MaxHP,
-			Type:      e.Type,
-			Timestamp: timestamp,
-			Direction: e.Direction,
+		for _, etr := range enemiesToRemove {
+			removeEnemy(etr)
 		}
-
-		if e.HP <= 0 {
-			enemiesToRemove = append(enemiesToRemove, e.ID)
-		}
-
-		enemyUpdates = append(enemyUpdates, enemyUpdate)
-	}
-	mu.Unlock()
-
-	if len(enemyUpdates) > 0 {
-		select {
-		case enemyUpdateChan <- enemyUpdates:
-			// log.Println("GameLoop sent updates for", len(playerUpdates), "players")
-		default:
-			log.Println("GameLoop updateChan full, skipping broadcast")
-		}
-	}
-
-	for _, etr := range enemiesToRemove {
-		removeEnemy(etr)
-	}
+	*/
 }
 
 func BroadcastLoopPlayerUpdates(playerUpdateChan <-chan []PlayerUpdate) {

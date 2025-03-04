@@ -38,7 +38,7 @@ type EnemyLayer struct {
 	RespawnIntervalS float64
 	SpawnChance      float64
 	OccupiedTiles    []TilePosition // List of tile positions (x, y) that could spawn enemies
-	Enemies          map[string]*Enemy
+	EnemiesOnLayer   map[string]*Enemy
 	LastRespawnTime  int64 // Unix timestamp in milliseconds for last respawn
 }
 
@@ -50,7 +50,7 @@ type TilePosition struct {
 // Global variables for tilemap processor (scoped to package)
 var (
 	enemyLayers = make(map[string]*EnemyLayer)
-	Enemies     = make(map[string]*Enemy)
+	// Enemies     = make(map[string]*Enemy)
 )
 
 // Load and parse the tilemap on server startup
@@ -103,7 +103,7 @@ func processLayer(layer TilemapLayer, parentGroup string) {
 				enemyType = prop.Value.(string)
 			}
 		case "respawnInterval_s":
-			if prop.Type == "int" {
+			if prop.Type == "float" {
 				respawnIntervalS = prop.Value.(float64)
 			}
 		case "spawnChance":
@@ -121,7 +121,7 @@ func processLayer(layer TilemapLayer, parentGroup string) {
 			RespawnIntervalS: respawnIntervalS,
 			SpawnChance:      spawnChance,
 			OccupiedTiles:    make([]TilePosition, 0),
-			Enemies:          make(map[string]*Enemy),
+			EnemiesOnLayer:   make(map[string]*Enemy),
 			LastRespawnTime:  time.Now().UnixMilli(),
 		}
 
@@ -161,23 +161,8 @@ func spawnEnemy(layer *EnemyLayer, tileX, tileY int) {
 	x := float32(tileX * PIXELS_PER_TILE)
 	y := float32(tileY * PIXELS_PER_TILE)
 
-	mu.Lock()
-	enemy := &Enemy{
-		ID:          enemyID,
-		X:           x,
-		Y:           y,
-		Type:        layer.EnemyType,
-		LayerName:   layer.Name,
-		HP:          100, // Default HP, adjust as needed
-		MaxHP:       100, // Default MaxHP, adjust as needed
-		RespawnTime: 0,   // No respawn yet
-		IsAlive:     true,
-		VelocityX:   0,
-		VelocityY:   0,
-		Direction:   0, // Default direction (front)
-	}
-	Enemies[enemyID] = enemy
-	mu.Unlock()
+	// Use NewEnemy from enemy.go instead of creating Enemy directly
+	NewEnemy(enemyID, layer.EnemyType, layer.Name, x, y)
 
 	log.Println("Spawned enemy", enemyID, "at", x, y, "for layer", layer.Name)
 }
@@ -230,7 +215,7 @@ func respawnEnemies(layer *EnemyLayer, currentTime int64) {
 
 func countAliveEnemies(layer *EnemyLayer) int {
 	count := 0
-	for _, enemy := range layer.Enemies {
+	for _, enemy := range layer.EnemiesOnLayer {
 		if enemy.IsAlive {
 			count++
 		}
