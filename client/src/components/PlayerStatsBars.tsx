@@ -27,7 +27,6 @@ export function PlayerStatsBars({ gameRef, gameDimensions }: PlayerStatsBarsProp
                         // Create a new object to ensure React detects the change
                         const newStats = { ...players[localPlayerId] };
                         setPlayerStats(newStats);
-                        console.log("HP:", newStats.hp, "MaxHP:", newStats.maxHp);
                     }
                 }
             }
@@ -39,56 +38,87 @@ export function PlayerStatsBars({ gameRef, gameDimensions }: PlayerStatsBarsProp
     }, [gameRef]);
 
     const scale = Math.min(gameDimensions.width / 1920, gameDimensions.height / 1200);
-    const barWidth = 450 * scale;
-    const barHeight = 32 * scale;
-    const offsetX = 20 * scale;
-    const offsetY = 20 * scale;
-    const finalX = offsetX + gameDimensions.left;
-    const finalY = gameDimensions.height - offsetY + gameDimensions.top;
+    // Use a fixed base width scaled by max values, not arbitrary 450 * 32
+    const barPadding = 4 * scale;
+
+    const hpFillBarWidth = playerStats ? playerStats.maxHp * scale : 450; // Base width for visual consistency
+    const apFillBarWidth = playerStats ? playerStats.maxAp * scale : 450;
+    const fillBarHeight = 32 * scale;
+
+    const hpBgBarWidth = hpFillBarWidth + 2*barPadding;  // Static width for HP background
+    const apBgBarWidth = apFillBarWidth + 2*barPadding;  // Static width for AP background
+    const bgBarHeight = fillBarHeight + 2*barPadding;
+
+
+    const margin = 10 * scale;
+    const padding = 5 * scale;
+
+    const containerX = gameDimensions.left + margin;
+    const containerY = gameDimensions.top + gameDimensions.height - margin - 
+        2*bgBarHeight - padding;
 
     if (!playerStats) return null;
+
+    console.log(playerStats.maxHp);
 
     return (
         <div
             style={{
                 position: 'absolute',
-                left: `${finalX}px`,
-                top: `${finalY - barHeight * 2 - 10 * scale}px`,
+                left: `${containerX}px`,
+                top: `${containerY}px`,
                 zIndex: 2000,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: `${10 * scale}px`,
                 fontFamily: 'Pixelar',
             }}
         >
-            {/* HP Bar and Text */}
             <div
                 style={{
                     position: 'relative',
-                    width: `${barWidth}px`,
-                    height: `${barHeight}px`,
+                    width: `${hpBgBarWidth}px`, // 2px extra on each side
+                    height: `${bgBarHeight}px`, // 2px extra above and below
+                    top: 0,
+                    left: 0,
                 }}
             >
+                {/* Background Rectangle */}
                 <div
                     style={{
-                        width: `${barWidth * (playerStats.hp / playerStats.maxHp)}px`,
-                        height: `${barHeight}px`,
-                        backgroundColor: 'green',
-                        transition: 'width 0.2s',
+                        position: 'absolute',
+                        width: `${hpBgBarWidth}px`,
+                        height: `${bgBarHeight}px`,
+                        backgroundColor: '#333333', // Dark grey, you can use 'black' if preferred
+                        top: '0px', // Offset to extend beyond colored bar
+                        left: '0px',
                     }}
                 />
+                {/* HP Bar */}
+                <div
+                    style={{
+                        position: 'absolute',
+                        width: `${hpFillBarWidth * (playerStats.hp / playerStats.maxHp)}px`,
+                        height: `${fillBarHeight}px`,
+                        backgroundColor: 'green',
+                        transition: 'width 0.2s',
+                        top: barPadding,
+                        left: barPadding,
+                    }}
+                />
+                {/* Text */}
                 <span
                     style={{
                         position: 'absolute',
-                        left: '50%',
-                        top: '50%',
-                        transform: 'translate(-50%, -50%)',
+                        top: barPadding,
+                        left: barPadding,
+
+                        width: `${hpBgBarWidth-2*barPadding}px`,
+                        height: `${fillBarHeight}px`,
+
                         color: 'white',
-                        fontSize: `${32 * scale}px`,
-                        whiteSpace: 'nowrap',
+                        fontSize: `${fillBarHeight}px`,
+                        fontFamily: 'Pixelar', // Ensure it's properly loaded
                     }}
                 >
-                    {playerStats.hp}/{playerStats.maxHp}
+                    {playerStats.hp} / {playerStats.maxHp}
                 </span>
             </div>
 
@@ -96,30 +126,51 @@ export function PlayerStatsBars({ gameRef, gameDimensions }: PlayerStatsBarsProp
             <div
                 style={{
                     position: 'relative',
-                    width: `${barWidth}px`,
-                    height: `${barHeight}px`,
+                    width: `${apBgBarWidth}px`, // 2px extra on each side
+                    height: `${bgBarHeight}px`, // 2px extra above and below
+                    top: padding,
+                    left: 0,
                 }}
             >
+                {/* Background Rectangle */}
                 <div
                     style={{
-                        width: `${barWidth * (playerStats.ap / playerStats.maxAp)}px`,
-                        height: `${barHeight}px`,
-                        backgroundColor: 'blue',
-                        transition: 'width 0.2s',
+                        position: 'absolute',
+                        width: `${apBgBarWidth}px`,
+                        height: `${bgBarHeight}px`,
+                        backgroundColor: '#333333', // Dark grey
+                        top: 0,
+                        left: 0,
                     }}
                 />
+                {/* AP Bar */}
+                <div
+                    style={{
+                        position: 'absolute',
+                        width: `${apFillBarWidth * (playerStats.ap / playerStats.maxAp)}px`,
+                        height: `${fillBarHeight}px`,
+                        backgroundColor: 'blue',
+                        transition: 'width 0.2s',
+                        top: barPadding,
+                        left: barPadding,
+                    }}
+                />
+                {/* Text */}
                 <span
                     style={{
                         position: 'absolute',
-                        left: '50%',
-                        top: '50%',
-                        transform: 'translate(-50%, -50%)',
+                        top: barPadding,
+                        left: barPadding,
+
+                        width: `${apBgBarWidth-2*barPadding}px`,
+                        height: `${fillBarHeight}px`,
+
                         color: 'white',
-                        fontSize: `${32 * scale}px`,
-                        whiteSpace: 'nowrap',
+                        fontSize: `${fillBarHeight}px`,
+                        fontFamily: 'Pixelar', // Ensure it's properly loaded
                     }}
                 >
-                    {Math.floor(playerStats.ap)}/{playerStats.maxAp}
+                    {Math.floor(playerStats.ap)} / {playerStats.maxAp}
                 </span>
             </div>
         </div>

@@ -70,7 +70,7 @@ func NewEnemy(id, enemyType, layerName string, x, y float32) *Enemy {
 		AggroRadius:     8 * 32,   // 8 tiles
 		TelegraphRadius: 2.5 * 32, // 2 tiles
 		AttackRadius:    3 * 32,   // 1 tile
-		AttackDamage:    1,
+		AttackDamage:    10,
 	}
 	enemyMu.Lock()
 	Enemies[id] = e

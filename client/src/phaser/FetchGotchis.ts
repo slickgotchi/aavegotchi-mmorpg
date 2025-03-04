@@ -7,31 +7,6 @@ export interface Aavegotchi {
     withSetsRarityScore: number;
     svgs: { front: string; left: string; right: string; back: string };
 }
-/*
-export const removeBackgroundFromSVG = (svgString: string): string => {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(svgString, 'image/svg+xml');
-    const svg = doc.getElementsByTagName('svg')[0];
-
-    const groups = svg.getElementsByTagName('g');
-    let background: Element | undefined;
-    for (const group of groups) {
-        if (group.classList.contains('gotchi-bg')) {
-            background = group;
-            break;
-        }
-    }
-
-    if (background && svg.contains(background)) {
-        svg.removeChild(background);
-    } else {
-        console.log('No "gotchi-bg" group found in SVG');
-    }
-
-    const serializer = new XMLSerializer();
-    return serializer.serializeToString(svg);
-};
-*/
 
 export async function fetchAavegotchis(account: string): Promise<Aavegotchi[]> {
     const coreQuery = `

@@ -484,9 +484,11 @@ export class GameScene extends Phaser.Scene {
                 this.cameras.main.startFollow(this.players[data.id].sprite, true);
             }
 
-            // update hp
+            // update stats
             this.players[data.id].hp = data.hp;
-            console.log(data.hp);
+            this.players[data.id].maxHp = data.maxHp;
+            this.players[data.id].ap = data.ap;
+            this.players[data.id].maxAp = data.maxAp;
         }
     }
 
