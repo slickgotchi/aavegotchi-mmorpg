@@ -7,8 +7,8 @@ interface SelectedGotchiDisplayProps {
 
 export function SelectedGotchiDisplay({ selectedGotchi, gameDimensions }: SelectedGotchiDisplayProps) {
     const scale = Math.min(gameDimensions.width / 1920, gameDimensions.height / 1200);
-    const offsetX = 20 * scale;
-    const offsetY = 20 * scale;
+    const offsetX = 100 * scale;
+    const offsetY = 25 * scale;
     const finalX = offsetX + gameDimensions.left;
     const finalY = offsetY + gameDimensions.top;
 
@@ -18,13 +18,16 @@ export function SelectedGotchiDisplay({ selectedGotchi, gameDimensions }: Select
                 position: 'absolute',
                 left: `${finalX}px`,
                 top: `${finalY}px`,
+
                 fontSize: `${24 * scale}px`,
-                color: 'black',
-                zIndex: 2000,
-                fontFamily: 'Pixelar'
+                color: 'white',
+                zIndex: 2001,
+                fontFamily: 'Pixelar',
+
+                textShadow: '0px 0px 2px black'
             }}
         >
-            {selectedGotchi ? `Playing as: ${selectedGotchi.name}` : ''}
+            {selectedGotchi ? `${selectedGotchi.name}` : 'D Fault'}
         </div>
     );
 }

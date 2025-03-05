@@ -2,20 +2,13 @@ import { useEffect, useState } from 'react';
 import { Game } from 'phaser';
 import { Player } from '../phaser/GameScene';
 
-// interface Player {
-//     hp: number;
-//     maxHp: number;
-//     ap: number;
-//     maxAp: number;
-// }
-
-interface PlayerStatsBarsProps {
+interface PlayerXPStatsProps {
     gameRef: React.MutableRefObject<Phaser.Game | null>;
     gameDimensions: { width: number; height: number; left: number; top: number };
 }
 
-export function PlayerStatsBars({ gameRef, gameDimensions }: PlayerStatsBarsProps) {
-    const [playerStats, setPlayerStats] = useState<Player | null>(null);
+export function PlayerXPStatsHUD({ gameRef, gameDimensions }: PlayerXPStatsProps) {
+    const [playerXPStats, setPlayerXPStats] = useState<Player | null>(null);
 
     useEffect(() => {
         const updateStats = () => {
@@ -27,7 +20,8 @@ export function PlayerStatsBars({ gameRef, gameDimensions }: PlayerStatsBarsProp
                     if (players && localPlayerId && players[localPlayerId]) {
                         // Create a new object to ensure React detects the change
                         const newStats = { ...players[localPlayerId] };
-                        setPlayerStats(newStats);
+                        console.log(newStats.gameLevel);
+                        setPlayerXPStats(newStats);
                     }
                 }
             }
@@ -42,45 +36,47 @@ export function PlayerStatsBars({ gameRef, gameDimensions }: PlayerStatsBarsProp
     // Use a fixed base width scaled by max values, not arbitrary 450 * 32
     const barPadding = 4 * scale;
 
-    const hpFillBarWidth = playerStats ? playerStats.maxHp * scale : 450; // Base width for visual consistency
-    const apFillBarWidth = playerStats ? playerStats.maxAp * scale : 450;
-    const fillBarHeight = 32 * scale;
+    const xpFillBarWidth = 800 * scale; // Base width for visual consistency
+    const xpFillBarHeight = 32 * scale;
+    const xpBgBarWidth = xpFillBarWidth + 2*barPadding;  // Static width for HP background
+    const xpBgBarHeight = xpFillBarHeight + 2*barPadding;
 
-    const hpBgBarWidth = hpFillBarWidth + 2*barPadding;  // Static width for HP background
-    const apBgBarWidth = apFillBarWidth + 2*barPadding;  // Static width for AP background
-    const bgBarHeight = fillBarHeight + 2*barPadding;
-
+    const levelFillBarWidth = 64 * scale; // Base width for visual consistency
+    const levelFillBarHeight = 48 * scale;
+    const levelBgBarWidth = levelFillBarWidth + 2*barPadding;  // Static width for HP background
+    const levelBgBarHeight = levelFillBarHeight + 2*barPadding;
 
     const margin = 10 * scale;
-    const padding = 5 * scale;
 
-    const containerX = gameDimensions.left + margin;
-    const containerY = gameDimensions.top + gameDimensions.height - margin - 
-        2*bgBarHeight - padding;
+    if (!playerXPStats) return null;
 
-    if (!playerStats) return null;
-
-    // console.log(playerStats.maxHp);
+    // temp data for laying out the visuals
+    // playerXPStats.level = 72;
+    // playerXPStats.xp_total = 1000;
+    // playerXPStats.xp_onCurrentLevel = 55;
+    // playerXPStats.xp_totalForNextLevel = 100;
 
     const shadow = 0*scale;
     const blur = 3*scale;
     const textShadow = `${shadow}px ${shadow}px ${blur}px rgba(0,0,0,1)`;
 
+    // console.log(playerXPStats.gameLevel);
+
     return (
         <div
             style={{
                 position: 'absolute',
-                left: `${containerX}px`,
-                top: `${containerY}px`,
+                left: `${gameDimensions.left+margin}px`,
+                top: `${gameDimensions.top+margin}px`,
                 zIndex: 2000,
                 fontFamily: 'Pixelar',
             }}
         >
             <div
                 style={{
-                    position: 'relative',
-                    width: `${hpBgBarWidth}px`, // 2px extra on each side
-                    height: `${bgBarHeight}px`, // 2px extra above and below
+                    position: 'absolute',
+                    width: `${levelBgBarWidth}px`, // 2px extra on each side
+                    height: `${levelBgBarHeight}px`, // 2px extra above and below
                     top: 0,
                     left: 0,
                 }}
@@ -89,21 +85,23 @@ export function PlayerStatsBars({ gameRef, gameDimensions }: PlayerStatsBarsProp
                 <div
                     style={{
                         position: 'absolute',
-                        width: `${hpBgBarWidth}px`,
-                        height: `${bgBarHeight}px`,
+                        top: 0, // Offset to extend beyond colored bar
+                        left: 0,
+
+                        // width: `${levelBgBarWidth}px`,
+                        // height: `${levelBgBarHeight}px`,
+                        width: '100%',
+                        height: '100%',
                         backgroundColor: '#333333', // Dark grey, you can use 'black' if preferred
-                        top: '0px', // Offset to extend beyond colored bar
-                        left: '0px',
                     }}
                 />
-                {/* HP Bar */}
+                {/* Fill Bar */}
                 <div
                     style={{
                         position: 'absolute',
-                        width: `${hpFillBarWidth * (playerStats.hp / playerStats.maxHp)}px`,
-                        height: `${fillBarHeight}px`,
-                        backgroundColor: '#38b764',
-                        transition: 'width 0.2s',
+                        width: `${levelFillBarWidth}px`,
+                        height: `${levelFillBarHeight}px`,
+                        backgroundColor: '#ffcd75',
                         top: barPadding,
                         left: barPadding,
                     }}
@@ -112,51 +110,51 @@ export function PlayerStatsBars({ gameRef, gameDimensions }: PlayerStatsBarsProp
                 <span
                     style={{
                         position: 'absolute',
-                        top: barPadding,
-                        left: barPadding,
+                        top: `${levelBgBarHeight*0.15}px`,
+                        left: 0,
 
-                        width: `${hpBgBarWidth-2*barPadding}px`,
-                        height: `${fillBarHeight}px`,
+                        width: '100%',
+                        height: '100%',
 
                         color: 'white',
-                        fontSize: `${fillBarHeight}px`,
+                        fontSize: `${levelBgBarHeight*0.7}px`,
                         fontFamily: 'Pixelar', // Ensure it's properly loaded
 
                         textShadow: textShadow, // Outline effect
                     }}
                 >
-                    {playerStats.hp} / {playerStats.maxHp}
+                    {playerXPStats.gameLevel}
                 </span>
             </div>
 
-            {/* AP Bar and Text */}
+            {/* XP Bar and Text */}
             <div
                 style={{
-                    position: 'relative',
-                    width: `${apBgBarWidth}px`, // 2px extra on each side
-                    height: `${bgBarHeight}px`, // 2px extra above and below
-                    top: padding,
-                    left: 0,
+                    position: 'absolute',
+                    top: levelBgBarHeight/2 - xpBgBarHeight/2,
+                    left: levelBgBarWidth-barPadding,
+                    width: `${xpBgBarWidth}px`, // 2px extra on each side
+                    height: `${xpBgBarHeight}px`, // 2px extra above and below
                 }}
             >
                 {/* Background Rectangle */}
                 <div
                     style={{
                         position: 'absolute',
-                        width: `${apBgBarWidth}px`,
-                        height: `${bgBarHeight}px`,
+                        width: `${xpBgBarWidth}px`,
+                        height: `${xpBgBarHeight}px`,
                         backgroundColor: '#333333', // Dark grey
                         top: 0,
                         left: 0,
                     }}
                 />
-                {/* AP Bar */}
+                {/* XP fill Bar */}
                 <div
                     style={{
                         position: 'absolute',
-                        width: `${apFillBarWidth * (playerStats.ap / playerStats.maxAp)}px`,
-                        height: `${fillBarHeight}px`,
-                        backgroundColor: '#41a6f6',
+                        width: `${xpFillBarWidth * (playerXPStats.gameXpOnCurrentLevel / playerXPStats.gameXpTotalForNextLevel)}px`,
+                        height: `${xpFillBarHeight}px`,
+                        backgroundColor: '#ffcd75',
                         transition: 'width 0.2s',
                         top: barPadding,
                         left: barPadding,
@@ -169,17 +167,17 @@ export function PlayerStatsBars({ gameRef, gameDimensions }: PlayerStatsBarsProp
                         top: barPadding,
                         left: barPadding,
 
-                        width: `${apBgBarWidth-2*barPadding}px`,
-                        height: `${fillBarHeight}px`,
+                        width: `${xpBgBarWidth}px`,
+                        height: `${xpBgBarHeight}px`,
 
                         color: 'white',
-                        fontSize: `${fillBarHeight}px`,
+                        fontSize: `${xpFillBarHeight}px`,
                         fontFamily: 'Pixelar', // Ensure it's properly loaded
 
                         textShadow: textShadow, // Outline effect
                     }}
                 >
-                    {Math.floor(playerStats.ap)} / {playerStats.maxAp}
+                    {Math.floor(playerXPStats.gameXpOnCurrentLevel)} / {playerXPStats.gameXpTotalForNextLevel}
                 </span>
             </div>
         </div>

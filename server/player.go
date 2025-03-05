@@ -13,6 +13,23 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+const (
+	MAX_LEVEL         = 50 // Max level for the game
+	BASE_XP_PER_LEVEL = 100
+	XP_GROWTH_FACTOR  = 1.5 // Exponential growth factor for XP requirements
+)
+
+var totalXpRequiredForLevel = make([]int, MAX_LEVEL+1) // XP needed to reach each level (index 0 unused, 1 to 50)
+
+// Initialize XP requirements in init()
+func init() {
+	for level := 1; level <= MAX_LEVEL; level++ {
+		totalXpRequiredForLevel[level] = int(float64(BASE_XP_PER_LEVEL) * math.Pow(float64(level-1), XP_GROWTH_FACTOR))
+	}
+	// Example XP requirements (adjust as needed):
+	// Level 2: 100, Level 3: 225, Level 3: 405, ..., Level 50: ~1,000,000
+}
+
 // Player struct
 type Player struct {
 	ID        string
@@ -35,20 +52,32 @@ type Player struct {
 	AttackTimerMs    float32
 	AttackIntervalMs float32
 	AttackRadius     float32
+
+	GameXP       int // our in game xp
+	GameLevel    int // our in game level
+	OnchainXP    int // aavegotchi XP onchain
+	OnchainLevel int // aavegotchi level onchain
+
+	GameXPOnCurrentLevel    int
+	GameXPTotalForNextLevel int
 }
 
 // PlayerUpdate struct
 type PlayerUpdate struct {
-	ID        string  `json:"id"`
-	X         float32 `json:"x"`
-	Y         float32 `json:"y"`
-	HP        int     `json:"hp"`
-	MaxHP     int     `json:"maxHp"`
-	AP        int     `json:"ap"`
-	MaxAP     int     `json:"maxAp"`
-	GotchiID  int     `json:"gotchiId"`
-	Timestamp int64   `json:"timestamp"`
-	Direction int     `json:"direction"`
+	ID                      string  `json:"id"`
+	X                       float32 `json:"x"`
+	Y                       float32 `json:"y"`
+	HP                      int     `json:"hp"`
+	MaxHP                   int     `json:"maxHp"`
+	AP                      int     `json:"ap"`
+	MaxAP                   int     `json:"maxAp"`
+	GotchiID                int     `json:"gotchiId"`
+	Timestamp               int64   `json:"timestamp"`
+	Direction               int     `json:"direction"`
+	GameXP                  int     `json:"gameXp"`
+	GameLevel               int     `json:"gameLevel"`
+	GameXPOnCurrentLevel    int     `json:"gameXpOnCurrentLevel"`
+	GameXPTotalForNextLevel int     `json:"gameXpTotalForNextLevel"`
 }
 
 // Global player variables
@@ -72,11 +101,11 @@ func NewPlayer(conn *websocket.Conn, remoteAddr string) *Player {
 		ID:               remoteAddr,
 		X:                float32(MAP_WIDTH_TILES*PIXELS_PER_TILE) / 2,
 		Y:                float32(MAP_HEIGHT_TILES*PIXELS_PER_TILE) / 2,
-		HP:               100,
-		MaxHP:            100,
+		HP:               300,
+		MaxHP:            300,
 		ATK:              45,
-		AP:               100,
-		MaxAP:            100,
+		AP:               200,
+		MaxAP:            200,
 		RGN:              1.0,
 		Speed:            5 * 32,
 		Conn:             conn,
@@ -86,9 +115,16 @@ func NewPlayer(conn *websocket.Conn, remoteAddr string) *Player {
 		VelocityY:        0,
 		Direction:        0,
 		AttackTimerMs:    0,
-		AttackIntervalMs: 2000,
+		AttackIntervalMs: 1000,
 		AttackRadius:     4 * 32,
+
+		GameXP:    0,
+		GameLevel: 1,
 	}
+
+	// add 0 xp to trigger next level calcs etc
+	addXP(p, 0)
+
 	mu.Lock()
 	players[remoteAddr] = p
 	mu.Unlock()
@@ -253,16 +289,20 @@ func UpdatePlayers(tickIntervalMs int, timestamp int64) {
 		p.Y += p.VelocityY * float32(tickIntervalMs) * 0.001
 
 		playerUpdates = append(playerUpdates, PlayerUpdate{
-			ID:        p.ID,
-			X:         p.X,
-			Y:         p.Y,
-			HP:        p.HP,
-			MaxHP:     p.MaxHP,
-			AP:        p.AP,
-			MaxAP:     p.MaxAP,
-			GotchiID:  p.GotchiID,
-			Timestamp: timestamp,
-			Direction: p.Direction,
+			ID:                      p.ID,
+			X:                       p.X,
+			Y:                       p.Y,
+			HP:                      p.HP,
+			MaxHP:                   p.MaxHP,
+			AP:                      p.AP,
+			MaxAP:                   p.MaxAP,
+			GotchiID:                p.GotchiID,
+			Timestamp:               timestamp,
+			Direction:               p.Direction,
+			GameXP:                  p.GameXP,
+			GameLevel:               p.GameLevel,
+			GameXPOnCurrentLevel:    p.GameXPOnCurrentLevel,
+			GameXPTotalForNextLevel: p.GameXPTotalForNextLevel,
 		})
 	}
 	mu.RUnlock()
@@ -312,6 +352,12 @@ func HandlePlayerAttacks(tickIntervalMs int, timestamp int64) {
 							Damage: p.ATK,
 						})
 						hitEnemies = append(hitEnemies, e.ID)
+
+						// Award XP when enemy HP reaches 0
+						if e.HP <= 0 {
+							xpDrop := getXPDropForEnemy(e.Type) // Function defined below
+							addXP(p, xpDrop)
+						}
 					}
 				}
 
@@ -333,5 +379,62 @@ func HandlePlayerAttacks(tickIntervalMs int, timestamp int64) {
 	}
 	if len(damageUpdates) > 0 {
 		damageUpdateChan <- damageUpdates
+	}
+}
+
+// getXPDropForEnemy returns XP based on enemy type
+func getXPDropForEnemy(enemyType string) int {
+	switch enemyType {
+	case "easy":
+		return 10
+	case "medium":
+		return 20
+	case "hard":
+		return 30
+	default:
+		return 5 // Default for unknown types
+	}
+}
+
+// addXP adds XP to a player, handles level-ups, and updates stats
+func addXP(p *Player, amount int) {
+	p.GameXP += amount
+
+	// Calculate current progress
+	totalXpRequiredForCurrentLevel := totalXpRequiredForLevel[p.GameLevel]
+	totalXpRequiredForNextLevel := totalXpRequiredForLevel[p.GameLevel+1]
+	p.GameXPOnCurrentLevel = p.GameXP - totalXpRequiredForCurrentLevel
+	p.GameXPTotalForNextLevel = totalXpRequiredForNextLevel - totalXpRequiredForCurrentLevel
+
+	// Check for level-up
+	for p.GameXP >= totalXpRequiredForLevel[p.GameLevel+1] && p.GameLevel < MAX_LEVEL {
+		p.GameLevel++
+		// Increase ATK by 10% on level-up
+		p.ATK = int(float64(p.ATK) * 1.1) // Round down to integer
+		totalXpRequiredForCurrentLevel = totalXpRequiredForLevel[p.GameLevel]
+		totalXpRequiredForNextLevel = totalXpRequiredForLevel[p.GameLevel+1]
+		p.GameXPOnCurrentLevel = p.GameXP - totalXpRequiredForCurrentLevel
+		p.GameXPTotalForNextLevel = totalXpRequiredForNextLevel - totalXpRequiredForCurrentLevel
+
+		// Send level-up message to the player
+		levelUpMsg := Message{
+			Type: "levelUp",
+			Data: mustMarshal(struct {
+				NewLevel                int `json:"newLevel"`
+				NewATK                  int `json:"newATK"`
+				GameXPOnCurrentLevel    int `json:"gamexponcurrentlevel"`
+				GameXPTotalForNextLevel int `json:"gamexptotalfornextlevel"`
+			}{
+				NewLevel:                p.GameLevel,
+				NewATK:                  p.ATK,
+				GameXPOnCurrentLevel:    p.GameXPOnCurrentLevel,
+				GameXPTotalForNextLevel: p.GameXPTotalForNextLevel,
+			}),
+		}
+		if err := p.Conn.WriteJSON(levelUpMsg); err != nil {
+			log.Println("Failed to send level-up message to", p.ID, ":", err)
+		} else {
+			log.Println("Sent level-up message to", p.ID, "for level", p.GameLevel)
+		}
 	}
 }

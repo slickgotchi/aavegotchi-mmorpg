@@ -21,6 +21,11 @@ export interface Player {
     maxHp: number;
     ap: number;
     maxAp: number;
+
+    gameXp: number;
+    gameLevel: number;
+    gameXpOnCurrentLevel: number;
+    gameXpTotalForNextLevel: number;
 }
 
 export interface Enemy {
@@ -477,6 +482,9 @@ export class GameScene extends Phaser.Scene {
                 .setDepth(1000)
                 .setScale(1) // Ensure 64x64 size
                 .setName(data.id);
+            
+
+            console.log("first time adding", data);
 
             this.players[data.id] = {
                 sprite: newPlayerSprite,
@@ -487,9 +495,13 @@ export class GameScene extends Phaser.Scene {
                 maxHp: data.maxHp,
                 ap: data.ap,
                 maxAp: data.maxAp,
+                gameXp: data.gameXp,
+                gameLevel: data.gameLevel,
+                gameXpOnCurrentLevel: data.gameXpOnCurrentLevel,
+                gameXpTotalForNextLevel: data.gameXpTotalForNextLevel
             } 
 
-            console.log(`Added placeholder player ${data.id} at (${data.x}, ${data.y})`);
+            console.log(`Added placeholder player`, this.players[data.id]);
         } 
 
         // MOVE EXISTING PLAYER
@@ -547,6 +559,10 @@ export class GameScene extends Phaser.Scene {
             this.players[data.id].maxHp = data.maxHp;
             this.players[data.id].ap = data.ap;
             this.players[data.id].maxAp = data.maxAp;
+            this.players[data.id].gameXp = data.gameXp;
+            this.players[data.id].gameLevel = data.gameLevel;
+            this.players[data.id].gameXpOnCurrentLevel = data.gameXpOnCurrentLevel;
+            this.players[data.id].gameXpTotalForNextLevel = data.gameXpTotalForNextLevel; 
         }
     }
 

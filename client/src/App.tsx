@@ -7,6 +7,7 @@ import { AavegotchiSelectList } from './components/AavegotchiSelectList';
 import { PlayerStatsBars } from './components/PlayerStatsBars';
 import { SelectedGotchiDisplay } from './components/SelectedGotchiDisplay';
 import { Aavegotchi } from './phaser/FetchGotchis';
+import { PlayerXPStatsHUD } from './components/PlayerXPStatHUD';
 
 const GAME_WIDTH = 1920;
 const GAME_HEIGHT = 1200;
@@ -82,7 +83,7 @@ function App() {
     
             // Final correction after resize stops
             clearTimeout(resizeTimeout);
-            resizeTimeout = setTimeout(updateDimensions, 100);
+            resizeTimeout = setTimeout(updateDimensions, 250);
         };
     
         window.addEventListener('resize', resizeHandler);
@@ -141,24 +142,9 @@ function App() {
             {selectedGotchi && (
                 <SelectedGotchiDisplay selectedGotchi={selectedGotchi} gameDimensions={gameDimensions} />
             )}
+            <PlayerXPStatsHUD gameRef={gameRef} gameDimensions={gameDimensions} />
         </div>
     );
-
-    /*
-    return (
-        <div ref={containerRef} className="game-container">
-            <div
-                className="red-rectangle"
-                style={{
-                    width: `${rectWidth}px`,
-                    height: `${rectHeight}px`,
-                    left: `${finalX}px`,
-                    top: `${finalY}px`,
-                }}
-            />
-        </div>
-    );
-    */
 }
 
 export default App;
