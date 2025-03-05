@@ -31,7 +31,7 @@ export function ConnectWalletButton({ gameRef, onAccountChange, gameDimensions }
                     gameRef.current.registry.set('account', accounts[0]);
                     gameRef.current.registry.set('gotchis', gotchis);
                 }
-            } catch (err) {
+            } catch (err: any) {
                 console.error('Wallet connection or Gotchi fetch failed:', err.message || err);
             }
         } else {
