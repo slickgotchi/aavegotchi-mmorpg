@@ -8,6 +8,7 @@ import { PlayerStatsBars } from './components/PlayerStatsBars';
 import { SelectedGotchiDisplay } from './components/SelectedGotchiDisplay';
 import { Aavegotchi } from './phaser/FetchGotchis';
 import { PlayerXPStatsHUD } from './components/PlayerXPStatHUD';
+import { LevelUpNotification } from './components/LevelUpNotification';
 
 const GAME_WIDTH = 1920;
 const GAME_HEIGHT = 1200;
@@ -19,6 +20,13 @@ function App() {
     const [gotchis, setGotchis] = useState<Aavegotchi[]>([]);
     const [selectedGotchi, setSelectedGotchi] = useState<Aavegotchi | null>(null);
     const [gameDimensions, setGameDimensions] = useState({ width: GAME_WIDTH, height: GAME_HEIGHT, left: 0, top: 0 });
+    const [levelUpData, setLevelUpData] = useState<{
+        newLevel: number;
+        newATK: number;
+        gameXpOnCurrentLevel: number;
+        gameXpTotalForNextLevel: number;
+    } | null>(null);
+
 
     useEffect(() => {
         if (!containerRef.current) return;
@@ -46,6 +54,11 @@ function App() {
         }
     
         const game = gameRef.current;
+
+        // Listen for level-up event from Phaser
+        game.registry.events.on('levelUp', (data: any) => {
+            setLevelUpData(data);
+        });
     
         const updateDimensions = () => {
             const canvas = game.canvas;
@@ -80,6 +93,8 @@ function App() {
             }
     
             game.scale.resize(newWidth, newHeight);
+
+
     
             // Final correction after resize stops
             clearTimeout(resizeTimeout);
@@ -96,6 +111,7 @@ function App() {
             }
             window.removeEventListener('resize', resizeHandler);
             game.events.off('resize', resizeHandler);
+            game.registry.events.off('levelUp'); // Cleanup
         };
     }, []);
     
@@ -107,6 +123,10 @@ function App() {
 
     const handleSelectGotchi = (gotchi: Aavegotchi) => {
         setSelectedGotchi(gotchi);
+    };
+
+    const handleLevelUpComplete = () => {
+        setLevelUpData(null); // Clear level-up notification after animation
     };
 
     // Calculate scaled rectangle dimensions and offset
@@ -143,6 +163,14 @@ function App() {
                 <SelectedGotchiDisplay selectedGotchi={selectedGotchi} gameDimensions={gameDimensions} />
             )}
             <PlayerXPStatsHUD gameRef={gameRef} gameDimensions={gameDimensions} />
+            {levelUpData && (
+                <LevelUpNotification
+                    gameRef={gameRef}
+                    levelUpData={levelUpData}
+                    onComplete={handleLevelUpComplete}
+                    gameDimensions={gameDimensions}
+                />
+            )}
         </div>
     );
 }

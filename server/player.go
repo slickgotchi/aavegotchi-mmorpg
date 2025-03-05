@@ -422,8 +422,8 @@ func addXP(p *Player, amount int) {
 			Data: mustMarshal(struct {
 				NewLevel                int `json:"newLevel"`
 				NewATK                  int `json:"newATK"`
-				GameXPOnCurrentLevel    int `json:"gamexponcurrentlevel"`
-				GameXPTotalForNextLevel int `json:"gamexptotalfornextlevel"`
+				GameXPOnCurrentLevel    int `json:"gameXpOnCurrentLevel"`
+				GameXPTotalForNextLevel int `json:"gameXpTotalForNextLevel"`
 			}{
 				NewLevel:                p.GameLevel,
 				NewATK:                  p.ATK,

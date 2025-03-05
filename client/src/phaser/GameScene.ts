@@ -151,6 +151,10 @@ export class GameScene extends Phaser.Scene {
                             });
                         }
                         break;
+                    case "levelUp":
+                        this.registry.events.emit('levelUp', data);
+                        // this.handleLevelUp(data);
+                        break;
                 }
             };
             this.ws.onerror = (e) => console.error('WebSocket error:', e);
@@ -277,6 +281,54 @@ export class GameScene extends Phaser.Scene {
             ease: 'Quad.easeIn',
             onComplete: () => {
                 damageText.setVisible(false); // Return to pool
+            },
+        });
+    }
+
+    handleLevelUp(data: any) {
+        // const { newLevel, newATK, gameXpOnCurrentLevel, gameXpTotalForNextLevel } = data;
+        
+        const localPlayer = this.players[this.localPlayerID];
+    
+        let x: number = localPlayer.sprite.x; 
+        let y: number = localPlayer.sprite.y;
+        let textColor: string = '#ffffff';
+        let offsetY: number = 128 + 64;
+    
+        // Create "Level Up!" text with larger font
+        const levelUpText = this.getPooledText(x, y - offsetY, "Level Up!");
+        levelUpText.setStyle({
+            fontFamily: 'Pixelar',
+            fontSize: '48px',
+            color: textColor,
+            stroke: '#000000',
+            strokeThickness: 1,
+        });
+        levelUpText.setOrigin(0.5, 0.5); // Center horizontally and vertically
+        levelUpText.setDepth(3000);
+    
+        // Create "ATK +10%" text with smaller font, positioned below "Level Up!"
+        const atkText = this.getPooledText(x, y - offsetY + 40, "ATK +10%"); // 40px below for spacing
+        atkText.setStyle({
+            fontFamily: 'Pixelar',
+            fontSize: '24px', // Smaller font size for ATK text
+            color: textColor,
+            stroke: '#000000',
+            strokeThickness: 1,
+        });
+        atkText.setOrigin(0.5, 0.5); // Center horizontally and vertically
+        atkText.setDepth(3000);
+    
+        // Animate both texts together to fade out and move upward
+        this.tweens.add({
+            targets: [levelUpText, atkText], // Animate both text objects
+            y: '-=20', // Move up 20px (relative to current position)
+            alpha: 0,   // Fade out
+            duration: 3000, // 3-second animation
+            ease: 'Quad.easeIn',
+            onComplete: () => {
+                levelUpText.setVisible(false); // Return to pool
+                atkText.setVisible(false);     // Return to pool
             },
         });
     }

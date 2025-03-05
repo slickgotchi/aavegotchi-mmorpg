@@ -1,0 +1,18 @@
+@keyframes fadeAndMoveUp {
+    0% {
+        opacity: 1;
+        transform: translate(-50%, 0); /* Start at initial position (centered horizontally) */
+    }
+    90% {
+        opacity: 1; /* Stay visible for 90% of the time */
+        transform: translate(-50%, -20px); /* Move up 20px over most of the duration */
+    }
+    100% {
+        opacity: 0; /* Quick fade out at the end */
+        transform: translate(-50%, -20px); /* Stay at final position */
+    }
+}
+
+.level-up-notification {
+    /* Ensure no other styles interfere with the animation */
+}
