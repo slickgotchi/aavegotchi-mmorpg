@@ -21,6 +21,7 @@ export function SelectedGotchiDisplay({ selectedGotchi, gameDimensions }: Select
                 fontSize: `${24 * scale}px`,
                 color: 'black',
                 zIndex: 2000,
+                fontFamily: 'Pixelar'
             }}
         >
             {selectedGotchi ? `Playing as: ${selectedGotchi.name}` : ''}

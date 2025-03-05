@@ -1,0 +1,52 @@
+@font-face {
+    font-family: 'Pixelar Textured';
+    src: url('PixelarTextured.eot');
+    src: local('Pixelar Textured'), local('PixelarTextured'),
+        url('PixelarTextured.eot?#iefix') format('embedded-opentype'),
+        url('PixelarTextured.woff2') format('woff2'),
+        url('PixelarTextured.woff') format('woff'),
+        url('PixelarTextured.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'Pixelar Outline';
+    src: url('PixelarOutline.eot');
+    src: local('Pixelar Outline'), local('PixelarOutline'),
+        url('PixelarOutline.eot?#iefix') format('embedded-opentype'),
+        url('PixelarOutline.woff2') format('woff2'),
+        url('PixelarOutline.woff') format('woff'),
+        url('PixelarOutline.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'Pixelar';
+    src: url('PixelarRegular.eot');
+    src: local('Pixelar Regular'), local('PixelarRegular'),
+        url('PixelarRegular.eot?#iefix') format('embedded-opentype'),
+        url('PixelarRegular.woff2') format('woff2'),
+        url('PixelarRegular.woff') format('woff'),
+        url('PixelarRegular.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'Pixelar Outline Textured';
+    src: url('PixelarOutlineTextured.eot');
+    src: local('Pixelar Outline Textured'), local('PixelarOutlineTextured'),
+        url('PixelarOutlineTextured.eot?#iefix') format('embedded-opentype'),
+        url('PixelarOutlineTextured.woff2') format('woff2'),
+        url('PixelarOutlineTextured.woff') format('woff'),
+        url('PixelarOutlineTextured.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
+

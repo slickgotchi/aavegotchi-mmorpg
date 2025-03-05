@@ -68,8 +68,8 @@ func NewEnemy(id, enemyType, layerName string, x, y float32) *Enemy {
 		SpawnPointY:     y,
 		RoamSpeed:       1.5 * 32, // 2 tiles per second
 		AggroRadius:     8 * 32,   // 8 tiles
-		TelegraphRadius: 2.5 * 32, // 2 tiles
-		AttackRadius:    3 * 32,   // 1 tile
+		TelegraphRadius: 1.5 * 32, // 2 tiles
+		AttackRadius:    2 * 32,   // 1 tile
 		AttackDamage:    10,
 	}
 	enemyMu.Lock()
@@ -226,6 +226,7 @@ func UpdateEnemies(tickIntervalMs int, timestamp int64) {
 }
 
 func updateRoamState(e *Enemy, deltaTime float32) {
+
 	// Randomly change direction occasionally
 	if rand.Float32() < 0.05 { // 5% chance per tick
 		angle := rand.Float32() * 2 * math.Pi
@@ -244,6 +245,10 @@ func updateRoamState(e *Enemy, deltaTime float32) {
 		e.VelocityX = e.RoamSpeed * float32(math.Cos(float64(angle)))
 		e.VelocityY = e.RoamSpeed * float32(math.Sin(float64(angle)))
 	}
+
+	// apply anticlump
+	antiClump(e, 100)
+
 }
 
 func updatePursueState(e *Enemy, target *Player, deltaTime float32) {
@@ -260,6 +265,9 @@ func updatePursueState(e *Enemy, target *Player, deltaTime float32) {
 		e.VelocityX = (dx / dist) * e.RoamSpeed * 1.5 // 1.5x roam speed
 		e.VelocityY = (dy / dist) * e.RoamSpeed * 1.5
 	}
+
+	// apply anticlump
+	antiClump(e, 100)
 }
 
 func findNearestPlayer(e *Enemy) *Player {
@@ -283,6 +291,37 @@ func distanceTo(e *Enemy, p *Player) float32 {
 	dx := e.X - p.X
 	dy := e.Y - p.Y
 	return float32(math.Sqrt(float64(dx*dx + dy*dy)))
+}
+
+// antiClump adds velocity to push the enemy away from nearby enemies
+func antiClump(e *Enemy, strength float32) {
+	const minSeparation = 64 // Minimum distance in pixels (1 tile) before repulsion kicks in
+
+	for _, other := range Enemies {
+		if other == e || !other.IsAlive {
+			continue // Skip self and dead enemies
+		}
+
+		dx := e.X - other.X
+		dy := e.Y - other.Y
+		dist := float32(math.Sqrt(float64(dx*dx + dy*dy)))
+
+		if dist < minSeparation && dist > 0 { // Avoid division by zero
+			// Calculate repulsion force (stronger when closer)
+			force := strength * (minSeparation - dist) / minSeparation
+			// Normalize direction and apply force
+			e.VelocityX += (dx / dist) * force
+			e.VelocityY += (dy / dist) * force
+		}
+	}
+
+	// Cap total velocity to prevent excessive movement
+	maxSpeed := e.RoamSpeed * 1.5 // Use pursue speed as max
+	totalSpeed := float32(math.Sqrt(float64(e.VelocityX*e.VelocityX + e.VelocityY*e.VelocityY)))
+	if totalSpeed > maxSpeed {
+		e.VelocityX = (e.VelocityX / totalSpeed) * maxSpeed
+		e.VelocityY = (e.VelocityY / totalSpeed) * maxSpeed
+	}
 }
 
 // HandleEnemyRespawns manages enemy respawning

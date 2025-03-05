@@ -62,6 +62,8 @@ export class GameScene extends Phaser.Scene {
         this.load.image('enemy-medium', '/assets/enemy-medium.png');
         this.load.image('enemy-hard', '/assets/enemy-hard.png');
         this.load.image('gotchi_placeholder', '/assets/gotchi_placeholder.png');
+
+        this.load.font('Pixelar', 'assets/fonts/pixelar/PixelarRegular.ttf');
     }
 
     create() {
@@ -124,6 +126,13 @@ export class GameScene extends Phaser.Scene {
                         if (Array.isArray(data)){
                             data.forEach(datum => {
                                 this.handleAttackUpdates(datum);
+                            })
+                        }
+                    break;
+                    case "damageUpdates":
+                        if (Array.isArray(data)){
+                            data.forEach(datum => {
+                                this.handleDamageUpdate(datum);
                             })
                         }
                     break;
@@ -216,6 +225,55 @@ export class GameScene extends Phaser.Scene {
         if (data.hp <= 0){
             this.removeEnemy(data.id);
         }
+    }
+
+    handleDamageUpdate(data: any) {
+        const { id, type, damage } = data;
+    
+        let x: number, y: number;
+        let textColor: string;
+        let offsetY: number;
+    
+        if (type === "enemy" && this.enemies[id]) {
+            // Enemy position from container
+            x = this.enemies[id].container.x;
+            y = this.enemies[id].container.y;
+            textColor = '#ffffff'; // White for enemies
+            offsetY = -32;         // 32px above enemy
+        } else if (type === "player" && this.players[id]) {
+            // Player position from sprite
+            x = this.players[id].sprite.x;
+            y = this.players[id].sprite.y;
+            textColor = '#ff0000'; // Red for players
+            offsetY = -64;         // 64px above player
+        } else {
+            console.warn(`Entity ${id} of type ${type} not found for damage update`);
+            return;
+        }
+    
+        // Create damage text using Pixelar font with black outline
+        const damageText = this.getPooledText(x, y + offsetY, damage.toString());
+        damageText.setStyle({
+            fontFamily: 'Pixelar',
+            fontSize: '24px',
+            color: textColor,
+            stroke: '#000000',      // Black outline
+            strokeThickness: 1,     // Thickness of the outline (adjust as needed)
+        });
+        damageText.setOrigin(0.5, 0.5); // Center the text horizontally and vertically
+        damageText.setDepth(3000);
+    
+        // Animate the text to fade out and move upward
+        this.tweens.add({
+            targets: damageText,
+            y: damageText.y - 20,   // Move up 20px
+            alpha: 0,               // Fade out
+            duration: 1000,         // 1 second animation
+            ease: 'Quad.easeIn',
+            onComplete: () => {
+                damageText.setVisible(false); // Return to pool
+            },
+        });
     }
 
     // Function to create a simple rectangle explosion
