@@ -149,11 +149,14 @@ func processLayer(layer TilemapLayer, parentGroup string) {
 
 func initialSpawnEnemies(layer *EnemyLayer) {
 	rand.Seed(time.Now().UnixNano())
+	count := 0
 	for _, tile := range layer.OccupiedTiles {
 		if rand.Float64() < layer.SpawnChance {
 			spawnEnemy(layer, tile.X, tile.Y)
+			count++
 		}
 	}
+	log.Println("spawned enemies: ", count)
 }
 
 func spawnEnemy(layer *EnemyLayer, tileX, tileY int) {
@@ -164,7 +167,7 @@ func spawnEnemy(layer *EnemyLayer, tileX, tileY int) {
 	// Use NewEnemy from enemy.go instead of creating Enemy directly
 	NewEnemy(enemyID, layer.EnemyType, layer.Name, x, y)
 
-	log.Println("Spawned enemy", enemyID, "at", x, y, "for layer", layer.Name)
+	// log.Println("Spawned enemy", enemyID, "at", x, y, "for layer", layer.Name)
 }
 
 func generateEnemyID(layerName string, tileX, tileY int) string {

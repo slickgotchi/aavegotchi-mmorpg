@@ -9,6 +9,7 @@ import { SelectedGotchiDisplay } from './components/SelectedGotchiDisplay';
 import { Aavegotchi } from './phaser/FetchGotchis';
 import { PlayerXPStatsHUD } from './components/PlayerXPStatHUD';
 import { LevelUpNotification } from './components/LevelUpNotification';
+import { DebugInfo } from './components/DebugInfo';
 
 const GAME_WIDTH = 1920;
 const GAME_HEIGHT = 1200;
@@ -26,7 +27,7 @@ function App() {
         gameXpOnCurrentLevel: number;
         gameXpTotalForNextLevel: number;
     } | null>(null);
-
+    const [ws, setWs] = useState<WebSocket | null>(null); // Track WebSocket
 
     useEffect(() => {
         if (!containerRef.current) return;
@@ -54,6 +55,17 @@ function App() {
         }
     
         const game = gameRef.current;
+
+        // // Initialize WebSocket (similar to GameScene)
+        // const websocket = new WebSocket('ws://localhost:8080/ws');
+        // websocket.onopen = () => {
+        //     console.log('WebSocket connected in App');
+        //     setWs(websocket);
+        // };
+        // websocket.onclose = () => {
+        //     console.log('WebSocket closed in App');
+        //     setWs(null);
+        // };
 
         // Listen for level-up event from Phaser
         game.registry.events.on('levelUp', (data: any) => {
@@ -162,7 +174,16 @@ function App() {
             {selectedGotchi && (
                 <SelectedGotchiDisplay selectedGotchi={selectedGotchi} gameDimensions={gameDimensions} />
             )}
-            <PlayerXPStatsHUD gameRef={gameRef} gameDimensions={gameDimensions} />
+            <PlayerXPStatsHUD 
+                gameRef={gameRef} 
+                levelUpData={levelUpData}
+                gameDimensions={gameDimensions} 
+            />
+            <DebugInfo
+                gameRef={gameRef}
+                ws={ws}
+                gameDimensions={gameDimensions}
+            />
             {levelUpData && (
                 <LevelUpNotification
                     gameRef={gameRef}

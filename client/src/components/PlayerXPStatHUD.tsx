@@ -1,14 +1,23 @@
 import { useEffect, useState } from 'react';
 import { Game } from 'phaser';
 import { Player } from '../phaser/GameScene';
+import './PlayerXPStatHUD.css';
 
 interface PlayerXPStatsProps {
     gameRef: React.MutableRefObject<Phaser.Game | null>;
+    levelUpData: {
+        newLevel: number;
+        newATK: number;
+        gameXpOnCurrentLevel: number;
+        gameXpTotalForNextLevel: number;
+    } | null;
     gameDimensions: { width: number; height: number; left: number; top: number };
 }
 
-export function PlayerXPStatsHUD({ gameRef, gameDimensions }: PlayerXPStatsProps) {
+export function PlayerXPStatsHUD({ gameRef, levelUpData, gameDimensions }: PlayerXPStatsProps) {
     const [playerXPStats, setPlayerXPStats] = useState<Player | null>(null);
+    const [isFlashing, setIsFlashing] = useState(false); // State to trigger flash animation
+    const [animationKey, setAnimationKey] = useState(0); // Unique key for animation to prevent re-triggering
 
     useEffect(() => {
         const updateStats = () => {
@@ -20,7 +29,6 @@ export function PlayerXPStatsHUD({ gameRef, gameDimensions }: PlayerXPStatsProps
                     if (players && localPlayerId && players[localPlayerId]) {
                         // Create a new object to ensure React detects the change
                         const newStats = { ...players[localPlayerId] };
-                        console.log(newStats.gameLevel);
                         setPlayerXPStats(newStats);
                     }
                 }
@@ -30,7 +38,20 @@ export function PlayerXPStatsHUD({ gameRef, gameDimensions }: PlayerXPStatsProps
         // Poll for changes
         const interval = setInterval(updateStats, 100);
         return () => clearInterval(interval);
-    }, [gameRef]);
+    }, [gameRef, playerXPStats]); // Include playerXPStats to detect changes
+
+    useEffect(() => {
+        if (levelUpData) {
+            console.log("Level Up! Triggering border flash");
+            setIsFlashing(true);
+            setAnimationKey(prev => prev + 1); // Increment animation key to ensure unique animation
+            const timer = setTimeout(() => {
+                console.log("Border flash reset");
+                setIsFlashing(false);
+            }, 1000); // Flash for 1 second
+            return () => clearTimeout(timer);
+        }
+    }, [levelUpData]);
 
     const scale = Math.min(gameDimensions.width / 1920, gameDimensions.height / 1200);
     // Use a fixed base width scaled by max values, not arbitrary 450 * 32
@@ -73,26 +94,32 @@ export function PlayerXPStatsHUD({ gameRef, gameDimensions }: PlayerXPStatsProps
             }}
         >
             <div
+
                 style={{
                     position: 'absolute',
                     width: `${levelBgBarWidth}px`, // 2px extra on each side
                     height: `${levelBgBarHeight}px`, // 2px extra above and below
                     top: 0,
                     left: 0,
+
+
                 }}
             >
                 {/* Background Rectangle */}
                 <div
+                    key={`level-${animationKey}`} // Unique key to prevent animation re-triggering
+                    className={isFlashing ? 'flash-border' : ''}
                     style={{
                         position: 'absolute',
                         top: 0, // Offset to extend beyond colored bar
                         left: 0,
 
-                        // width: `${levelBgBarWidth}px`,
-                        // height: `${levelBgBarHeight}px`,
                         width: '100%',
                         height: '100%',
                         backgroundColor: '#333333', // Dark grey, you can use 'black' if preferred
+
+                    boxSizing: 'border-box',
+
                     }}
                 />
                 {/* Fill Bar */}
@@ -129,23 +156,32 @@ export function PlayerXPStatsHUD({ gameRef, gameDimensions }: PlayerXPStatsProps
 
             {/* XP Bar and Text */}
             <div
+
                 style={{
                     position: 'absolute',
                     top: levelBgBarHeight/2 - xpBgBarHeight/2,
                     left: levelBgBarWidth-barPadding,
                     width: `${xpBgBarWidth}px`, // 2px extra on each side
                     height: `${xpBgBarHeight}px`, // 2px extra above and below
+
+
                 }}
             >
                 {/* Background Rectangle */}
                 <div
+                    key={`level-${animationKey}`} // Unique key to prevent animation re-triggering
+                    className={isFlashing ? 'flash-border' : ''}
                     style={{
                         position: 'absolute',
                         width: `${xpBgBarWidth}px`,
                         height: `${xpBgBarHeight}px`,
-                        backgroundColor: '#333333', // Dark grey
+                        // backgroundColor: isFlashing ? "#ffffff" : '#333333', // Dark grey
+                        backgroundColor: "#333333",
                         top: 0,
                         left: 0,
+                        
+                    boxSizing: 'border-box'
+
                     }}
                 />
                 {/* XP fill Bar */}

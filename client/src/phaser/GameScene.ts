@@ -175,6 +175,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     addOrUpdateEnemy(data: any) {
+        // return;
         // NEW ENEMY
         if (!this.enemies[data.id] && data.hp > 0) {
             const texture = `enemy-${data.type}`;
@@ -478,11 +479,18 @@ export class GameScene extends Phaser.Scene {
                 return;
             }
 
+            // Check if the layer has the "isEnemyLayer" property and skip if true
+            const isEnemyLayer = (layerData.properties as Array<{ name: string, value: any }>)?.find(prop => prop.name === 'isEnemyLayer')?.value === true;
+            if (isEnemyLayer) {
+                console.log(`Skipping enemy layer: ${layerName}`);
+                return;
+            }
+
             // Create the layer if it's not hidden
             const layer = map.createLayer(layerName, tileset, 0, 0);
             if (layer) {
                 // Dynamically set depth based on layer order (top layers should have higher depth)
-                layer.setDepth(map.layers.length - index); // Layers at the top get higher depth values
+                layer.setDepth(index); // Layers at the top get higher depth values
                 layer.setVisible(true);
                 console.log(`Layer "${layerName}" created successfully at depth ${map.layers.length - index}`);
             } else {

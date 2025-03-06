@@ -48,6 +48,7 @@ type Player struct {
 	VelocityX float32
 	VelocityY float32
 	Direction int
+	Mu        sync.RWMutex
 
 	AttackTimerMs    float32
 	AttackIntervalMs float32
@@ -131,6 +132,8 @@ func NewPlayer(conn *websocket.Conn, remoteAddr string) *Player {
 	return p
 }
 
+var cleanupChan = make(chan string, 100)
+
 // HandlePlayerConnection manages WebSocket connection and messages
 func HandlePlayerConnection(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -147,6 +150,7 @@ func HandlePlayerConnection(w http.ResponseWriter, r *http.Request) {
 			ID string `json:"id"`
 		}{ID: p.ID}),
 	}
+
 	if err := conn.WriteJSON(welcomeMsg); err != nil {
 		log.Println("Failed to send welcome to", p.ID, ":", err)
 	}
@@ -155,9 +159,7 @@ func HandlePlayerConnection(w http.ResponseWriter, r *http.Request) {
 
 	go func(p *Player) {
 		defer func() {
-			mu.Lock()
-			delete(players, p.ID)
-			mu.Unlock()
+			cleanupChan <- p.ID
 			p.Conn.Close()
 			log.Println("Client disconnected:", p.ID)
 			disconnectMsg := Message{
@@ -192,6 +194,15 @@ func HandlePlayerConnection(w http.ResponseWriter, r *http.Request) {
 	}(p)
 
 	<-make(chan struct{})
+}
+
+// Add cleanup goroutine in main
+func HandlePlayerCleanup() {
+	for id := range cleanupChan {
+		mu.Lock()
+		delete(players, id)
+		mu.Unlock()
+	}
 }
 
 // Player message handlers
@@ -282,9 +293,14 @@ func handlePlayerMessageInput(p *Player, msg Message) {
 
 // UpdatePlayers handles player movement and state updates
 func UpdatePlayers(tickIntervalMs int, timestamp int64) {
+	// RLock to safely read the "players" map
 	mu.RLock()
+
 	var playerUpdates []PlayerUpdate
 	for _, p := range players {
+		// lock per player to edit because each "p" is a pointer to the actual player
+		p.Mu.Lock()
+
 		p.X += p.VelocityX * float32(tickIntervalMs) * 0.001
 		p.Y += p.VelocityY * float32(tickIntervalMs) * 0.001
 
@@ -304,7 +320,12 @@ func UpdatePlayers(tickIntervalMs int, timestamp int64) {
 			GameXPOnCurrentLevel:    p.GameXPOnCurrentLevel,
 			GameXPTotalForNextLevel: p.GameXPTotalForNextLevel,
 		})
+
+		// unlock our player
+		p.Mu.Unlock()
 	}
+
+	// RUnlock because we are done reading the "players" map
 	mu.RUnlock()
 
 	if len(playerUpdates) > 0 {
@@ -321,12 +342,17 @@ func HandlePlayerAttacks(tickIntervalMs int, timestamp int64) {
 	var attackUpdates []AttackUpdate
 	var damageUpdates []DamageUpdate
 
+	// lets do a global lock so we can safely iterate over "players" and "Enemies"
+	mu.RLock()
+
 	for _, p := range players {
-		mu.Lock()
-		playerMinX := p.X - 40*0.5*32
-		playerMinY := p.Y - 25*0.5*32
-		playerMaxX := p.X + 40*0.5*32
-		playerMaxY := p.Y + 25*0.5*32
+		// lock this player
+		p.Mu.Lock()
+
+		playerMinX := p.X - p.AttackRadius - 40*0.5*32 // Extend buffer slightly
+		playerMinY := p.Y - p.AttackRadius - 25*0.5*32
+		playerMaxX := p.X + p.AttackRadius + 40*0.5*32
+		playerMaxY := p.Y + p.AttackRadius + 25*0.5*32
 
 		isEnemiesOnScreen := false
 		for _, e := range Enemies {
@@ -342,7 +368,12 @@ func HandlePlayerAttacks(tickIntervalMs int, timestamp int64) {
 				p.AttackTimerMs += p.AttackIntervalMs
 				hitEnemies := make([]string, 0)
 
+				// Use spatial check to reduce enemy iterations
 				for _, e := range Enemies {
+					if e.X < playerMinX || e.X > playerMaxX || e.Y < playerMinY || e.Y > playerMaxY {
+						continue // Skip enemies outside rough range
+					}
+
 					distSq := (e.X-p.X)*(e.X-p.X) + (e.Y-p.Y)*(e.Y-p.Y)
 					if distSq < p.AttackRadius*p.AttackRadius {
 						e.HP -= p.ATK
@@ -354,9 +385,10 @@ func HandlePlayerAttacks(tickIntervalMs int, timestamp int64) {
 						hitEnemies = append(hitEnemies, e.ID)
 
 						// Award XP when enemy HP reaches 0
-						if e.HP <= 0 {
-							xpDrop := getXPDropForEnemy(e.Type) // Function defined below
-							addXP(p, xpDrop)
+						if e.HP <= 0 && e.KillerID == "" && !e.IsDeathProcessed {
+							// xpDrop := getXPDropForEnemy(e)
+							// addXP(p, xpDrop)
+							e.KillerID = p.ID
 						}
 					}
 				}
@@ -382,23 +414,16 @@ func HandlePlayerAttacks(tickIntervalMs int, timestamp int64) {
 	}
 }
 
-// getXPDropForEnemy returns XP based on enemy type
-func getXPDropForEnemy(enemyType string) int {
-	switch enemyType {
-	case "easy":
-		return 10
-	case "medium":
-		return 20
-	case "hard":
-		return 30
-	default:
-		return 5 // Default for unknown types
-	}
-}
+// getXPDropForEnemy returns XP directly from the enemy instance
+// func getXPDropForEnemy(e *Enemy) int {
+// 	return e.XPDrop // Use the stored XP drop if added to Enemy struct
+// }
 
 // addXP adds XP to a player, handles level-ups, and updates stats
 func addXP(p *Player, amount int) {
 	p.GameXP += amount
+
+	log.Println("add XP")
 
 	// Calculate current progress
 	totalXpRequiredForCurrentLevel := totalXpRequiredForLevel[p.GameLevel]

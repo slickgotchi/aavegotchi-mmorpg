@@ -65,8 +65,8 @@ var (
 	damageUpdateChan = make(chan []DamageUpdate, 1000)
 	// mu               sync.RWMutex
 	TICK_INTERVAL_MS int = 100
-	MAP_WIDTH_TILES  int = 400
-	MAP_HEIGHT_TILES int = 300
+	MAP_WIDTH_TILES  int = 256
+	MAP_HEIGHT_TILES int = 256
 	PIXELS_PER_TILE  int = 32
 )
 
@@ -198,6 +198,7 @@ func broadcastMessage(msg Message, excludeID string) {
 	mu.RLock()
 	defer mu.RUnlock()
 	for id, p := range players {
+		mu.RLock()
 		if excludeID != "" && id == excludeID {
 			continue
 		}
@@ -206,6 +207,7 @@ func broadcastMessage(msg Message, excludeID string) {
 		} else {
 			log.Println("Broadcasted", msg.Type, "to", id)
 		}
+		mu.RUnlock()
 	}
 }
 
@@ -248,16 +250,7 @@ func fetchGotchiStats(gotchiId string) (int, error) {
 		log.Println("Conversion error for BRS:", err)
 		return 0, err
 	}
-	// traits := result.Data.Aavegotchi.ModifiedNumericTraits
-	// for _, trait := range traits {
-	// 	adjusted := 0
-	// 	if trait < 50 {
-	// 		adjusted = 100 - trait
-	// 	} else {
-	// 		adjusted = trait + 1
-	// 	}
-	// 	brs += adjusted
-	// }
+
 	log.Println("Fetched stats for Gotchi ID:", gotchiId, "BRS:", brs)
 	return brs, nil
 }
@@ -283,6 +276,7 @@ func main() {
 	go BroadcastLoopAttackUpdates(attackUpdateChan)
 	go BroadcastLoopDamageUpdates(damageUpdateChan)
 	go HandleEnemyRespawns() // Start enemy respawn logic in a separate goroutine
+	go HandlePlayerCleanup()
 
 	http.HandleFunc("/ws", wsHandler)
 	log.Println("Server starting on :8080")

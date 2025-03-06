@@ -33,7 +33,6 @@ export function LevelUpNotification({ gameRef, levelUpData, onComplete, gameDime
                 }
             }
         }
-        console.log("Level up");
     }, [levelUpData, gameRef]);
 
     // Animation effect: fade out and move upward over 3 seconds

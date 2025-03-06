@@ -1,0 +1,16 @@
+@keyframes flash-border {
+    0% {
+        border: 2px solid #333333; /* Start with default grey border */
+    }
+    50% {
+        border: 2px solid #ffffff; /* Flash white border at midpoint */
+    }
+    100% {
+        border: 2px solid #333333; /* Return to grey border */
+    }
+}
+
+.flash-border {
+    animation: flash-border 1s ease-in-out;
+    border: 2px solid #333333; /* Default border (grey) */
+}

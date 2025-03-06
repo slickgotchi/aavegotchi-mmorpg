@@ -64,7 +64,7 @@ export function ConnectWalletButton({ gameRef, onAccountChange, gameDimensions }
     const finalX = gameDimensions.left + offsetX;
     const finalY = offsetY + gameDimensions.top;
 
-    console.log("Rendering - isConnected:", isConnected, "isFetching:", isFetching, "gotchis length:", gotchis.length);
+    // console.log("Rendering - isConnected:", isConnected, "isFetching:", isFetching, "gotchis length:", gotchis.length);
 
     return (
         <div
