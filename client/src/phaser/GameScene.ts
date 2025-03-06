@@ -1,14 +1,16 @@
 import Phaser from 'phaser';
-import { fetchGotchiSVGs, Aavegotchi } from './FetchGotchis'; // Adjusted import to include Aavegotchi type
+import { fetchGotchiSVGs, Aavegotchi } from './FetchGotchis';
 
 const GAME_WIDTH = 1920;
 const GAME_HEIGHT = 1200;
 const MAX_POSITION_BUFFER_LENGTH = 10;
-const INTERPOLATION_DELAY_MS = 250;
+const INTERPOLATION_DELAY_MS = 100; // Reduced for faster response; adjust as needed
 
 export interface PositionUpdate {
     x: number;
     y: number;
+    vx?: number; // Velocity X (optional, for future server support)
+    vy?: number; // Velocity Y (optional)
     timestamp: number;
 }
 
@@ -16,16 +18,21 @@ export interface Player {
     sprite: Phaser.GameObjects.Sprite;
     gotchiId: number;
     isAssignedSVG: boolean;
-    positionBuffer: PositionUpdate[],
-    hp: number;
-    maxHp: number;
-    ap: number;
-    maxAp: number;
+    positionBuffer: PositionUpdate[];
+    // hp: number;
+    // maxHp: number;
+    // ap: number;
+    // maxAp: number;
+    // gameXp: number;
+    // gameLevel: number;
+    // gameXpOnCurrentLevel: number;
+    // gameXpTotalForNextLevel: number;
+}
 
-    gameXp: number;
-    gameLevel: number;
-    gameXpOnCurrentLevel: number;
-    gameXpTotalForNextLevel: number;
+export interface TilemapProperty {
+    name: string;
+    type: string;
+    value: any; // or specific type like boolean | string | number if known
 }
 
 export interface Enemy {
@@ -35,15 +42,19 @@ export interface Enemy {
     type: string;
     positionBuffer: PositionUpdate[];
     hp: number;
-    direction?: number; // Optional for enemies (if needed for animations)
+    direction?: number;
 }
+
+let player, zones, ws;
+const tileSize = 32;
+const zoneSize = 256; // 8192px
+// const scale = 1 / 32; //
 
 export class GameScene extends Phaser.Scene {
     private players: { [id: string]: Player } = {};
-    private enemies: { [id: string]: Enemy } = {}
+    private enemies: { [id: string]: Enemy } = {};
     private ws!: WebSocket;
     private keys!: { W: Phaser.Input.Keyboard.Key; A: Phaser.Input.Keyboard.Key; S: Phaser.Input.Keyboard.Key; D: Phaser.Input.Keyboard.Key; SPACE: Phaser.Input.Keyboard.Key };
-    // private stats = { hp: 0, maxHP: 0, atk: 0, ap: 0, maxAP: 0, rgn: 0 };
     private moveTimer = 0;
     private circlePool: Phaser.GameObjects.Graphics[] = [];
     private textPool: Phaser.GameObjects.Text[] = [];
@@ -51,6 +62,7 @@ export class GameScene extends Phaser.Scene {
     private keyState = { W: false, A: false, S: false, D: false, SPACE: false };
     private localPlayerID!: string;
     private followedPlayerID!: string;
+
 
     public getPlayers() { return this.players; }
     public getLocalPlayerID() { return this.localPlayerID; }
@@ -61,16 +73,95 @@ export class GameScene extends Phaser.Scene {
 
     preload() {
         this.load.image('tileset', 'assets/tilemap/tileset.png');
-        // this.load.image('tileset-extruded', 'assets/tiles/tileset-extruded.png');
         this.load.tilemapTiledJSON('map', 'assets/tilemap/mmorpg.json');
         this.load.image('enemy-easy', '/assets/enemy-easy.png');
         this.load.image('enemy-medium', '/assets/enemy-medium.png');
         this.load.image('enemy-hard', '/assets/enemy-hard.png');
         this.load.image('gotchi_placeholder', '/assets/gotchi_placeholder.png');
-
         this.load.font('Pixelar', 'assets/fonts/pixelar/PixelarRegular.ttf');
     }
 
+    create(){
+        if (this.input.keyboard === null) return;
+
+        this.keys = {
+            W: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W),
+            A: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.A),
+            S: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.S),
+            D: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D),
+            SPACE: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
+        };
+
+        // Draw 3x3 grid of zones with alternating colors
+        zones = this.add.group();
+        for (let y = 0; y < 3; y++) {
+            for (let x = 0; x < 3; x++) {
+                const color = (x + y) % 2 === 0 ? 0xff0000 : 0x00ff00; // Red/Green
+                const rect = this.add.rectangle(
+                    (x * zoneSize + zoneSize / 2) * tileSize,
+                    (y * zoneSize + zoneSize / 2) * tileSize,
+                    zoneSize*tileSize,
+                    zoneSize*tileSize,
+                    color
+                );
+                rect.setOrigin(0.5);
+                zones.add(rect);
+            }
+        }
+
+        this.cameras.main.setBounds(0, 0, zoneSize*3*tileSize, zoneSize*3*tileSize);
+
+
+        // this.createTilemap();
+
+        this.ws = new WebSocket("ws://localhost:8080/ws");
+        this.ws.onopen = () => {
+            console.log('Connected to server');
+            this.isConnected = true;
+
+            this.ws.onmessage = (event) => {
+                const messages = JSON.parse(event.data);
+                messages.forEach((msg:any) => {
+                    if (msg.type === 'playerUpdates') {
+                        msg.data.forEach((update:any) => {
+                            this.addOrUpdatePlayer(update);
+                        });
+                    }
+                    // Uncomment for enemies (disabled due to sprite limit)
+                    /*
+                    else if (msg.type === 'enemyUpdates') {
+                        msg.data.forEach(update => {
+                            if (!enemies[update.enemyId]) {
+                                enemies[update.enemyId] = this.add.rectangle(
+                                    update.x * tileSize * scale,
+                                    update.y * tileSize * scale,
+                                    10 * tileSize * scale,
+                                    10 * tileSize * scale,
+                                    0xff00ff
+                                );
+                                enemies[update.enemyId].setOrigin(0.5);
+                            } else {
+                                enemies[update.enemyId].x = update.x * tileSize * scale;
+                                enemies[update.enemyId].y = update.y * tileSize * scale;
+                            }
+                        });
+                    }
+                    */
+                });
+            }
+
+            this.ws.onerror = (e) => console.error('WebSocket error:', e);
+            this.ws.onclose = () => {
+                console.log('WebSocket closed');
+                this.isConnected = false;
+            };
+        }
+
+        this.resizeGame();
+        window.addEventListener('resize', () => this.resizeGame());
+    }
+
+    /*
     create() {
         if (this.input.keyboard === null) return;
 
@@ -84,8 +175,6 @@ export class GameScene extends Phaser.Scene {
 
         this.createTilemap();
 
-        // this.cursors = this.input.keyboard.createCursorKeys();
-
         for (let i = 0; i < 10; i++) {
             const circle = this.add.graphics();
             circle.fillStyle(0xff0000, 0);
@@ -97,13 +186,11 @@ export class GameScene extends Phaser.Scene {
             this.textPool.push(text);
         }
 
-        // Always connect WebSocket to show the world and existing players, even before spawning
         this.ws = new WebSocket('ws://localhost:8080/ws');
         this.ws.onopen = () => {
             console.log('Connected to server');
             this.isConnected = true;
 
-            // listen for updates
             this.ws.onmessage = (e) => {
                 let msg;
                 try {
@@ -112,54 +199,73 @@ export class GameScene extends Phaser.Scene {
                     console.error('Failed to parse message:', err, 'Data:', e.data);
                     return;
                 }
-                let data = msg.data;
-                if (typeof data === 'string') data = JSON.parse(data);
+                // let data = msg.data;
+                console.log(msg);
+
+                switch (msg.type){
+                    case "welcome":
+                        this.localPlayerID = msg.data.playerID
+                        console.log("localPlayerID: ", this.localPlayerID);
+                        break;
+                    case "playerUpdates":
+                        const {zone,playerUpdateData} = msg.data;
+                        // console.log("Zone: ", msg.zone, " playerUpdates");
+                        playerUpdateData.forEach((playerUpdateDatum: any) => {
+                            // console.log("playerUpdate: ", playerUpdateDatum);
+                            this.addOrUpdatePlayer(playerUpdateDatum);
+                        });
+                        break;
+                    default: break;
+                }
+
+                
+                if (typeof data === 'string') {
+                    try {
+                        data = JSON.parse(data);
+                    } catch (err) {
+                        console.error('Failed to parse nested data:', err, 'Data:', data);
+                        return;
+                    }
+                }
                 switch (msg.type) {
                     case "welcome":
-                        this.localPlayerID = msg.data.id;
-                        console.log("Local Player ID: ", this.localPlayerID);
+                        this.localPlayerID = data.id; // Now correctly accesses parsed id
+                        console.log("Local Player ID:", this.localPlayerID);
                         this.followedPlayerID = "";
                         break;
                     case "playerUpdates":
                         if (Array.isArray(data)) {
-                            data.forEach(update => {
-                                this.addOrUpdatePlayer(update);
-                            });
-                        } 
+                            data.forEach(update => this.addOrUpdatePlayer(update));
+                        }
                         break;
                     case "attackUpdates":
-                        if (Array.isArray(data)){
-                            data.forEach(datum => {
-                                this.handleAttackUpdates(datum);
-                            })
+                        if (Array.isArray(data)) {
+                            data.forEach(datum => this.handleAttackUpdates(datum));
                         }
-                    break;
+                        break;
                     case "damageUpdates":
-                        if (Array.isArray(data)){
-                            data.forEach(datum => {
-                                this.handleDamageUpdate(datum);
-                            })
+                        if (Array.isArray(data)) {
+                            data.forEach(datum => this.handleDamageUpdate(datum));
                         }
-                    break;
+                        break;
                     case "playerDisconnected":
                         this.removePlayer(data.id);
                         break;
                     case "enemyUpdates":
-                        if (Array.isArray(data)){
-                            data.forEach(datum => {
-                                this.addOrUpdateEnemy(datum);
-                            });
+                        if (Array.isArray(data)) {
+                            data.forEach(datum => this.addOrUpdateEnemy(datum));
                         }
                         break;
                     case "levelUp":
                         this.registry.events.emit('levelUp', data);
-                        // this.handleLevelUp(data);
+                        this.handleLevelUp(data);
                         break;
                 }
+                        
             };
             this.ws.onerror = (e) => console.error('WebSocket error:', e);
             this.ws.onclose = () => {
-                console.log('WebSocket closed in world-only mode');
+                console.log('WebSocket closed');
                 this.isConnected = false;
             };
         };
@@ -167,136 +273,206 @@ export class GameScene extends Phaser.Scene {
         this.resizeGame();
         window.addEventListener('resize', () => this.resizeGame());
 
-        // Start the UI scene
-        // this.scene.launch('UIScene');
+        this.registry.get('game')?.events.on('selectGotchi', this.onGotchiSelected, this);
+    }
+    */
 
-        // Listen for selectGotchi event
-        this.registry.get('game').events.on('selectGotchi', this.onGotchiSelected, this);
+    addOrUpdatePlayer(datum: any){
+        const {playerId, x, y} = datum;
+        // console.log(id, x, y);
+
+        // NEW PLAYER
+        if (!this.players[playerId]){
+
+            this.localPlayerID = playerId;
+
+            const newPlayerSprite = this.add.sprite(x, y, 'gotchi_placeholder')
+            .setDepth(1000)
+            .setScale(10)
+            // .setName(`player-${id}`);
+
+            this.cameras.main.startFollow(newPlayerSprite);
+
+            this.players[playerId] = {
+                sprite: newPlayerSprite,
+                gotchiId: 0,
+                isAssignedSVG: false,
+                positionBuffer: [],
+                // hp: data.hp || 0,
+                // maxHp: data.maxHp || 0,
+                // ap: data.ap || 0,
+                // maxAp: data.maxAp || 0,
+                // gameXp: data.gameXp || 0,
+                // gameLevel: data.gameLevel || 1,
+                // gameXpOnCurrentLevel: data.gameXpOnCurrentLevel || 0,
+                // gameXpTotalForNextLevel: data.gameXpTotalForNextLevel || 0
+            };
+            console.log(`Added placeholder player ${playerId}`);
+        }
+
+        // MOVE PLAYER
+        if (this.players[playerId]){
+            this.players[playerId].sprite.x = x;
+            this.players[playerId].sprite.y = y;
+            // console.log(x, y);
+        }
     }
 
+/*
+    addOrUpdatePlayer(data: any) {
+        if (!data.id || !data.timestamp) return;
+
+        if (!this.players[data.id]) {
+            const newPlayerSprite = this.add.sprite(data.x, data.y, 'gotchi_placeholder')
+                .setDepth(1000)
+                .setScale(1)
+                .setName(data.id);
+
+            this.players[data.id] = {
+                sprite: newPlayerSprite,
+                gotchiId: data.gotchiId || 0,
+                isAssignedSVG: false,
+                positionBuffer: [],
+                hp: data.hp || 0,
+                maxHp: data.maxHp || 0,
+                ap: data.ap || 0,
+                maxAp: data.maxAp || 0,
+                gameXp: data.gameXp || 0,
+                gameLevel: data.gameLevel || 1,
+                gameXpOnCurrentLevel: data.gameXpOnCurrentLevel || 0,
+                gameXpTotalForNextLevel: data.gameXpTotalForNextLevel || 0
+            };
+            console.log(`Added placeholder player ${data.id}`);
+        }
+
+        const player = this.players[data.id];
+        player.positionBuffer.push({
+            x: data.x,
+            y: data.y,
+            timestamp: data.timestamp
+        });
+
+        while (player.positionBuffer.length > MAX_POSITION_BUFFER_LENGTH) {
+            player.positionBuffer.shift();
+        }
+
+        if (!player.isAssignedSVG && data.gotchiId !== 0) {
+            player.gotchiId = data.gotchiId;
+            player.isAssignedSVG = true;
+            this.loadGotchiSVG(data.gotchiId, data.id, data.x, data.y);
+        }
+
+        if (player.isAssignedSVG && data.direction !== undefined) {
+            const directions = ['front', 'left', 'right', 'back'];
+            player.sprite.setTexture(`gotchi-${data.gotchiId}-${directions[data.direction]}`);
+        }
+
+        if (data.id === this.localPlayerID) {
+            if (this.followedPlayerID !== data.id) {
+                this.followedPlayerID = data.id;
+                this.cameras.main.startFollow(player.sprite, true);
+            }
+            player.hp = data.hp;
+            player.maxHp = data.maxHp;
+            player.ap = data.ap;
+            player.maxAp = data.maxAp;
+            player.gameXp = data.gameXp;
+            player.gameLevel = data.gameLevel;
+            player.gameXpOnCurrentLevel = data.gameXpOnCurrentLevel;
+            player.gameXpTotalForNextLevel = data.gameXpTotalForNextLevel;
+        }
+    }
+*/
     addOrUpdateEnemy(data: any) {
-        // return;
-        // NEW ENEMY
+        if (!data.id || !data.timestamp) return;
+
         if (!this.enemies[data.id] && data.hp > 0) {
             const texture = `enemy-${data.type}`;
-            const sprite = this.add.sprite(0, 0, texture)
-                .setDepth(1000) // Match player depth for consistency
-                .setScale(1); // Adjust scale to match player size if needed
-                
-            // Create the shadow (ellipse graphic)
-            const shadow = this.add.ellipse(0, sprite.height / 2, 24, 16, 0x000000, 0.5);
-            shadow.setDepth(999); // Slightly lower depth than enemy
-            shadow.setAlpha(0.5); // Semi-transparent shadow
-            
-            const hpBar = this.add.rectangle(0, - 30, 32, 5, 0xff0000).setOrigin(0.5, 0);
-
-            // Create a container to group the enemy and shadow
-            const container = this.add.container(data.x, data.y, [shadow, sprite, hpBar]);
-            container.setDepth(1000);
+            const sprite = this.add.sprite(0, 0, texture).setDepth(1000).setScale(1);
+            const shadow = this.add.ellipse(0, sprite.height / 2, 24, 16, 0x000000, 0.5).setDepth(999).setAlpha(0.5);
+            const hpBar = this.add.rectangle(0, -30, 32, 5, 0xff0000).setOrigin(0.5, 0);
+            const container = this.add.container(data.x, data.y, [shadow, sprite, hpBar]).setDepth(1000);
 
             this.enemies[data.id] = {
-                container: container,
+                container,
                 hpBar,
                 maxHp: data.maxHp,
                 type: data.type,
                 positionBuffer: [],
                 hp: data.hp,
-                direction: data.direction, // Add direction if enemies have animations
+                direction: data.direction
             };
-
-            // console.log(`Added enemy ${data.id} at (${data.x}, ${data.y}) with type ${data.type}`);
-        }
-
-        // MOVE EXISTING ENEMY
-        else if (data.hp > 0) {
-            this.enemies[data.id].positionBuffer.push({
+            console.log(`Added enemy ${data.id}`);
+        } else if (data.hp > 0) {
+            const enemy = this.enemies[data.id];
+            enemy.positionBuffer.push({
                 x: data.x,
                 y: data.y,
                 timestamp: data.timestamp
             });
 
-            // console.log(this.enemies[data.id]);
-
-            while (this.enemies[data.id].positionBuffer.length > MAX_POSITION_BUFFER_LENGTH) {
-                this.enemies[data.id].positionBuffer.shift();
+            while (enemy.positionBuffer.length > MAX_POSITION_BUFFER_LENGTH) {
+                enemy.positionBuffer.shift();
             }
 
-            // Update HP and direction
-            this.enemies[data.id].hp = data.hp;
+            enemy.hp = data.hp;
             if (data.direction !== undefined) {
-                this.enemies[data.id].direction = data.direction;
-                // Update enemy sprite direction if animations exist (e.g., similar to players)
-                // Note: You may need to define enemy textures like `enemy-easy-front`, `enemy-easy-left`, etc., if using directional sprites
+                enemy.direction = data.direction;
+                // Add directional sprite logic here if enemy textures support it
             }
-
             this.updateEnemyHP(data.id);
-        }
-
-        if (data.hp <= 0){
+        } else if (data.hp <= 0) {
             this.removeEnemy(data.id);
         }
     }
 
     handleDamageUpdate(data: any) {
         const { id, type, damage } = data;
-    
-        let x: number, y: number;
-        let textColor: string;
-        let offsetY: number;
-    
+        let x: number, y: number, textColor: string, offsetY: number;
+
         if (type === "enemy" && this.enemies[id]) {
-            // Enemy position from container
             x = this.enemies[id].container.x;
             y = this.enemies[id].container.y;
-            textColor = '#ffffff'; // White for enemies
-            offsetY = -32;         // 32px above enemy
+            textColor = '#ffffff';
+            offsetY = -32;
         } else if (type === "player" && this.players[id]) {
-            // Player position from sprite
             x = this.players[id].sprite.x;
             y = this.players[id].sprite.y;
-            textColor = '#ff0000'; // Red for players
-            offsetY = -64;         // 64px above player
+            textColor = '#ff0000';
+            offsetY = -64;
         } else {
-            console.warn(`Entity ${id} of type ${type} not found for damage update`);
             return;
         }
-    
-        // Create damage text using Pixelar font with black outline
+
         const damageText = this.getPooledText(x, y + offsetY, damage.toString());
         damageText.setStyle({
             fontFamily: 'Pixelar',
             fontSize: '24px',
             color: textColor,
-            stroke: '#000000',      // Black outline
-            strokeThickness: 1,     // Thickness of the outline (adjust as needed)
+            stroke: '#000000',
+            strokeThickness: 1,
         });
-        damageText.setOrigin(0.5, 0.5); // Center the text horizontally and vertically
-        damageText.setDepth(3000);
-    
-        // Animate the text to fade out and move upward
+        damageText.setOrigin(0.5, 0.5).setDepth(3000);
+
         this.tweens.add({
             targets: damageText,
-            y: damageText.y - 20,   // Move up 20px
-            alpha: 0,               // Fade out
-            duration: 1000,         // 1 second animation
+            y: damageText.y - 20,
+            alpha: 0,
+            duration: 1000,
             ease: 'Quad.easeIn',
-            onComplete: () => {
-                damageText.setVisible(false); // Return to pool
-            },
+            onComplete: () => damageText.setVisible(false),
         });
     }
 
     handleLevelUp(data: any) {
-        // const { newLevel, newATK, gameXpOnCurrentLevel, gameXpTotalForNextLevel } = data;
-        
-        const localPlayer = this.players[this.localPlayerID];
-    
-        let x: number = localPlayer.sprite.x; 
-        let y: number = localPlayer.sprite.y;
-        let textColor: string = '#ffffff';
-        let offsetY: number = 128 + 64;
-    
-        // Create "Level Up!" text with larger font
+        const player = this.players[this.localPlayerID];
+        if (!player) return;
+
+        const x = player.sprite.x;
+        const y = player.sprite.y;
+        const textColor = '#ffffff';
+        const offsetY = 128 + 64;
+
         const levelUpText = this.getPooledText(x, y - offsetY, "Level Up!");
         levelUpText.setStyle({
             fontFamily: 'Pixelar',
@@ -305,86 +481,66 @@ export class GameScene extends Phaser.Scene {
             stroke: '#000000',
             strokeThickness: 1,
         });
-        levelUpText.setOrigin(0.5, 0.5); // Center horizontally and vertically
-        levelUpText.setDepth(3000);
-    
-        // Create "ATK +10%" text with smaller font, positioned below "Level Up!"
-        const atkText = this.getPooledText(x, y - offsetY + 40, "ATK +10%"); // 40px below for spacing
+        levelUpText.setOrigin(0.5, 0.5).setDepth(3000);
+
+        const atkText = this.getPooledText(x, y - offsetY + 40, "ATK +10%");
         atkText.setStyle({
             fontFamily: 'Pixelar',
-            fontSize: '24px', // Smaller font size for ATK text
+            fontSize: '24px',
             color: textColor,
             stroke: '#000000',
             strokeThickness: 1,
         });
-        atkText.setOrigin(0.5, 0.5); // Center horizontally and vertically
-        atkText.setDepth(3000);
-    
-        // Animate both texts together to fade out and move upward
+        atkText.setOrigin(0.5, 0.5).setDepth(3000);
+
         this.tweens.add({
-            targets: [levelUpText, atkText], // Animate both text objects
-            y: '-=20', // Move up 20px (relative to current position)
-            alpha: 0,   // Fade out
-            duration: 3000, // 3-second animation
+            targets: [levelUpText, atkText],
+            y: '-=20',
+            alpha: 0,
+            duration: 3000,
             ease: 'Quad.easeIn',
             onComplete: () => {
-                levelUpText.setVisible(false); // Return to pool
-                atkText.setVisible(false);     // Return to pool
+                levelUpText.setVisible(false);
+                atkText.setVisible(false);
             },
         });
     }
 
-    // Function to create a simple rectangle explosion
     createRectExplosion(x: number, y: number, radius = 16, duration = 500, minWidth = 5, maxWidth = 10, minHeight = 5, maxHeight = 10) {
-        // Create three rectangles spaced 120 degrees apart
         for (let i = 0; i < 3; i++) {
-            const angle = Phaser.Math.DegToRad(i * 120); // 120 degrees apart
-            const distance = Phaser.Math.Between(0, radius); // Random distance within the radius
-
-            // Calculate the position of each rectangle
+            const angle = Phaser.Math.DegToRad(i * 120);
+            const distance = Phaser.Math.Between(0, radius);
             const rectX = x + Math.cos(angle) * distance;
             const rectY = y + Math.sin(angle) * distance;
-
-            // Randomly set width and height within given bounds
             const width = Phaser.Math.Between(minWidth, maxWidth);
             const height = Phaser.Math.Between(minHeight, maxHeight);
 
-            // Create a rectangle
             const rect = this.add.graphics({ x: rectX, y: rectY });
-            rect.fillStyle(0x888888, 1); // Grey color
+            rect.fillStyle(0x888888, 1);
             rect.fillRect(0, 0, width, height);
             rect.setDepth(901);
 
-            // Animate the rectangle (fade and move outwards)
             this.tweens.add({
                 targets: rect,
-                x: rect.x + Math.cos(angle) * radius * 1.5, // Move further outwards
-                y: rect.y + Math.sin(angle) * radius * 1.5, // Move further outwards
-                alpha: 0, // Fade out
+                x: rect.x + Math.cos(angle) * radius * 1.5,
+                y: rect.y + Math.sin(angle) * radius * 1.5,
+                alpha: 0,
                 duration: duration,
                 ease: 'Cubic.Out',
-                onComplete: () => rect.destroy() // Destroy after animation
+                onComplete: () => rect.destroy(),
             });
         }
     }
 
-    // Modify your removeEnemy method to call this new explosion effect
     removeEnemy(id: string) {
         if (this.enemies[id]) {
             const x = this.enemies[id].container.x;
             const y = this.enemies[id].container.y;
-
-            // Call the explosion effect
             this.createRectExplosion(x, y);
-
-            // Destroy the enemy
             this.enemies[id].container.destroy();
-            this.enemies[id].hpBar.destroy();
             delete this.enemies[id];
-            // console.log(`Removed enemy ${id}`);
         }
     }
-
 
     updateEnemyHP(id: string) {
         if (this.enemies[id]) {
@@ -392,63 +548,46 @@ export class GameScene extends Phaser.Scene {
             if (enemy.hp <= 0) {
                 this.removeEnemy(id);
             } else {
-                // console.log(enemy.hp, enemy.maxHp);
                 enemy.hpBar.width = 32 * (enemy.hp / enemy.maxHp);
             }
         }
     }
 
     handleAttackUpdates(data: any) {
-        // console.log(data);
         const radius = data.radius;
         const x = data.x;
         const y = data.y;
-    
-        // console.log("attack animation at x: ", x, ", y: ", y, ", radius: ", radius);
+        const attackColor = data.type === "playerAttack" ? 0xffffff : 0xff0000;
 
-        const attackColor = data.type == "playerAttack" ? 0xffffff : 0xff0000;
-    
-        // Get a pooled circle (or create one if none available)
-        const circle = this.getPooledCircle(x, y, radius, attackColor); // White circle
-        circle.setAlpha(0.5).setVisible(true);
-        circle.setDepth(900);
-    
-        // Create the rectangle (bat effect)
-        const rectWidth = radius;   // Length extends **one radius outward**
-        const rectHeight = radius * 0.1; // Thin width (20% of radius)
-        
-        // Position rectangle so **one end is at (0,0)** and it extends outward
-        const rectangle = this.add.rectangle(radius *0.75, 0, rectWidth*0.5, rectHeight, attackColor);
+        const circle = this.getPooledCircle(x, y, radius, attackColor);
+        circle.setAlpha(0.5).setVisible(true).setDepth(900);
+
+        const rectWidth = radius;
+        const rectHeight = radius * 0.1;
+        const rectangle = this.add.rectangle(radius * 0.75, 0, rectWidth * 0.5, rectHeight, attackColor);
         rectangle.setAlpha(0.9);
-    
-        // Create a container at the attack center
-        const container = this.add.container(x, y, [rectangle]);
-        container.setDepth(901);
-        container.rotation = Phaser.Math.DegToRad(90); // ✅ Start rotated correctly
-    
-        // Rotate the container around the attack center
+
+        const container = this.add.container(x, y, [rectangle]).setDepth(901);
+        container.rotation = Phaser.Math.DegToRad(90);
+
         this.tweens.add({
             targets: container,
-            angle: 360,  // Full rotation
-            duration: 250, // Over 200ms
-            repeat: 0, // No repeats
-            ease: 'Linear'
+            angle: 360,
+            duration: 250,
+            repeat: 0,
+            ease: 'Linear',
         });
-    
-        // Fade out both the circle and rectangle together
+
         this.tweens.add({
             targets: [circle],
             alpha: 0.2,
             duration: 250,
             onComplete: () => {
                 circle.setVisible(false);
-                container.destroy(); // Destroy container (removes rectangle too)
-            }
+                container.destroy();
+            },
         });
     }
-    
-    
-    
 
     createTilemap() {
         const map = this.make.tilemap({ key: 'map' });
@@ -456,227 +595,174 @@ export class GameScene extends Phaser.Scene {
             console.error('Tilemap failed to load');
             return;
         }
-        console.log('Tilemap loaded successfully');
-
         const tileset = map.addTilesetImage('tileset', 'tileset', 32, 32);
-        // const tileset = map.addTilesetImage('tileset', 'tileset-extruded', 32, 32, 5, 10);
         if (!tileset) {
-            console.error('Tileset not found or invalid in map');
+            console.error('Tileset not found');
             return;
         }
-        console.log('Tileset added successfully, tile width:', tileset.tileWidth, 'tile height:', tileset.tileHeight);
-
-        console.log('Available layers:', map.layers.map(l => l.name));
-
-        // Loop through all layers dynamically
+    
         map.layers.forEach((layerData, index) => {
             const layerName = layerData.name;
-
-            // Safely access properties and check for 'isHidden' property
-            const isHidden = (layerData.properties as Array<{ name: string, value: any }>)?.find((prop) => prop.name === 'isHidden')?.value === true;
-            if (isHidden) {
-                console.log(`Skipping hidden layer: ${layerName}`);
-                return;
-            }
-
-            // Check if the layer has the "isEnemyLayer" property and skip if true
-            const isEnemyLayer = (layerData.properties as Array<{ name: string, value: any }>)?.find(prop => prop.name === 'isEnemyLayer')?.value === true;
-            if (isEnemyLayer) {
-                console.log(`Skipping enemy layer: ${layerName}`);
-                return;
-            }
-
-            // Create the layer if it's not hidden
+    
+            // Explicitly type properties as TilemapProperty[]
+            const properties = layerData.properties as TilemapProperty[] | undefined;
+    
+            const isHidden = properties?.find(prop => prop.name === 'isHidden')?.value === true;
+            const isEnemyLayer = properties?.find(prop => prop.name === 'isEnemyLayer')?.value === true;
+    
+            if (isHidden || isEnemyLayer) return;
+    
             const layer = map.createLayer(layerName, tileset, 0, 0);
             if (layer) {
-                // Dynamically set depth based on layer order (top layers should have higher depth)
-                layer.setDepth(index); // Layers at the top get higher depth values
+                layer.setDepth(index);
                 layer.setVisible(true);
-                console.log(`Layer "${layerName}" created successfully at depth ${map.layers.length - index}`);
-            } else {
-                console.error(`Layer "${layerName}" creation failed`);
             }
         });
-
-        // Set up camera bounds
-        this.cameras.main.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
-
-        // Dynamically center camera follow based on tilemap size
+    
         const centerX = map.widthInPixels / 2;
         const centerY = map.heightInPixels / 2;
-
-        const initialCameraFollow = this.add.rectangle(centerX, centerY, 20, 20, 0xff0000)
-            .setOrigin(0.5, 0.5)
-            .setAlpha(0); // Invisible
-
-        this.cameras.main.startFollow(initialCameraFollow);
-
-        console.log(`Camera set up with bounds: ${map.widthInPixels}x${map.heightInPixels}, following (${centerX}, ${centerY})`);
+        // const initialCameraFollow = this.add.rectangle(centerX, centerY, 20, 20, 0xff0000).setOrigin(0.5, 0.5).setAlpha(0);
+        // this.cameras.main.startFollow(initialCameraFollow);
     }
 
-    
-
     onGotchiSelected(gotchi: Aavegotchi) {
-        console.log('Gotchi Selected in GameScene:', gotchi);
-        // Update registry with the selected Gotchi
         this.registry.set('selectedGotchi', gotchi);
-        // Set initial state to spawn player
         this.registry.set('initialState', 'spawnPlayer');
-        // Send join message to server to spawn player
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            console.log("Send: join - ", { gotchiId: gotchi.id });
             this.ws.send(JSON.stringify({ type: 'join', data: { gotchiId: gotchi.id } }));
         }
     }
 
     shutdown() {
-        // Remove the listener when the scene is destroyed to prevent memory leaks
-        this.registry.get('game').events.off('selectGotchi', this.onGotchiSelected, this);
-        console.log('GameScene shutting down, removed selectGotchi listener');
-    }
-
-    addOrUpdatePlayer(data: any) {
-        // NEW PLAYER
-        if (!this.players[data.id]) {
-            var newPlayerSprite = this.add.sprite(data.x, data.y, 'gotchi_placeholder')
-                .setDepth(1000)
-                .setScale(1) // Ensure 64x64 size
-                .setName(data.id);
-            
-
-            console.log("first time adding", data);
-
-            this.players[data.id] = {
-                sprite: newPlayerSprite,
-                gotchiId: data.gotchiId,
-                isAssignedSVG: false,
-                positionBuffer: [],
-                hp: data.hp,
-                maxHp: data.maxHp,
-                ap: data.ap,
-                maxAp: data.maxAp,
-                gameXp: data.gameXp,
-                gameLevel: data.gameLevel,
-                gameXpOnCurrentLevel: data.gameXpOnCurrentLevel,
-                gameXpTotalForNextLevel: data.gameXpTotalForNextLevel
-            } 
-
-            console.log(`Added placeholder player`, this.players[data.id]);
-        } 
-
-        // MOVE EXISTING PLAYER
-        else {
-            // this.players[data.id].sprite.setPosition(data.x, data.y);
-            this.players[data.id].positionBuffer.push({
-                x: data.x,
-                y: data.y,
-                timestamp: data.timestamp
-            });
-
-            while (this.players[data.id].positionBuffer.length > MAX_POSITION_BUFFER_LENGTH) {
-                this.players[data.id].positionBuffer.shift();
-            }
-        }
-
-        // SVG YET TO BE ASSIGNED PLAYER
-        if (!this.players[data.id].isAssignedSVG && data.gotchiId !== 0) {
-            this.players[data.id].gotchiId = data.gotchiId;
-            this.players[data.id].isAssignedSVG = true;
-            this.loadGotchiSVG(data.gotchiId, data.id, data.x, data.y);
-        }
-
-        // CHANGE FACING DIRECTION OF PLAYER
-        if (this.players[data.id].isAssignedSVG) {
-            switch (data.direction) {
-                case 0: // front
-                    this.players[data.id].sprite.setTexture(`gotchi-${data.gotchiId}-front`)
-                    break;
-                case 1: // left
-                    this.players[data.id].sprite.setTexture(`gotchi-${data.gotchiId}-left`)
-                    break;
-                case 2: // right
-                    this.players[data.id].sprite.setTexture(`gotchi-${data.gotchiId}-right`)
-                    break;
-                case 3: // back
-                    this.players[data.id].sprite.setTexture(`gotchi-${data.gotchiId}-back`)
-                    break;
-                default:
-                    break;
-
-            }
-        }
-
-        // LOCAL PLAYER ONLY (CAMERA SETUP)
-        if (data.id === this.localPlayerID) {
-            if (this.followedPlayerID !== data.id) {
-                this.followedPlayerID = data.id;
-                console.log("follow player at position: ", this.players[data.id].sprite.x, this.players[data.id].sprite.y);
-                this.cameras.main.startFollow(this.players[data.id].sprite, true);
-            }
-
-            // update stats
-            this.players[data.id].hp = data.hp;
-            this.players[data.id].maxHp = data.maxHp;
-            this.players[data.id].ap = data.ap;
-            this.players[data.id].maxAp = data.maxAp;
-            this.players[data.id].gameXp = data.gameXp;
-            this.players[data.id].gameLevel = data.gameLevel;
-            this.players[data.id].gameXpOnCurrentLevel = data.gameXpOnCurrentLevel;
-            this.players[data.id].gameXpTotalForNextLevel = data.gameXpTotalForNextLevel; 
-        }
+        this.registry.get('game')?.events.off('selectGotchi', this.onGotchiSelected, this);
+        console.log('GameScene shutting down');
     }
 
     async loadGotchiSVG(gotchiId: string, playerID: string, x: number, y: number) {
-        console.log("loadGotchiSVG: ", gotchiId);
         try {
             const svgs = await fetchGotchiSVGs(gotchiId);
-    
-            // Define the four views
             const views: (keyof typeof svgs)[] = ["front", "left", "right", "back"];
-    
-            // Load all views
             views.forEach(view => {
                 const svgDataUrl = `data:image/svg+xml;base64,${btoa(svgs[view])}`;
                 this.load.image(`gotchi-${gotchiId}-${view}`, svgDataUrl);
             });
-    
-            // Handle completion of image loading
+
             this.load.once('complete', () => {
                 if (this.players[playerID]) {
-                    this.players[playerID].sprite.destroy(); // Remove placeholder
-                    
-                    // Create the sprite using the "front" view by default
+                    this.players[playerID].sprite.destroy();
                     this.players[playerID].sprite = this.add.sprite(x, y, `gotchi-${gotchiId}-front`)
                         .setDepth(1000)
-                        .setScale(0.5) // Ensure 64x64 size
+                        .setScale(0.5)
                         .setName(playerID);
-                    
-                    // Ensure we clear the followed player ID (as the sprite was destroyed)
                     this.followedPlayerID = "";
-                    console.log(`Updated player ${playerID} with Gotchi SVG at (${x}, ${y})`);
                 }
             });
-    
             this.load.start();
         } catch (err) {
             console.error('Failed to load Gotchi SVG for player', playerID, ':', err);
         }
     }
-    
 
     removePlayer(id: string) {
         if (this.players[id]) {
             this.players[id].sprite.destroy();
             delete this.players[id];
-            console.log(`Removed player ${id}`);
         }
     }
 
+    update(time: number, delta: number) {
+        this.moveTimer -= delta / 1000;
+        // console.log(this.moveTimer, this.ws, this.localPlayerID);
+        if (this.moveTimer <= 0 && this.isConnected && this.localPlayerID) {
+            this.keyState = {
+                W: this.keys.W.isDown,
+                A: this.keys.A.isDown,
+                S: this.keys.S.isDown,
+                D: this.keys.D.isDown,
+                SPACE: this.keys.SPACE.isDown,
+            };
+            const message = JSON.stringify({ type: 'input', data: { 
+                playerId: this.localPlayerID, keys: this.keyState } });
+            try {
+                this.ws.send(message);
+                // console.log('Sent input for local player:', this.localPlayerID, this.keyState); // Add this log
+            } catch (e) {
+                console.error('Failed to send input:', e);
+            }
+            this.moveTimer = 0.1; // 100ms input rate
+        }
 
-    isInView(x: number, y: number, view: Phaser.Geom.Rectangle): boolean {
-        const buffer = 256;
-        return x >= view.left - buffer && x <= view.right + buffer &&
-            y >= view.top - buffer && y <= view.bottom + buffer;
+        this.interpolatePlayers();
+        this.interpolateEnemies();
+    }
+
+    interpolatePlayers() {
+        for (const id in this.players) {
+            const player = this.players[id];
+            if (player.positionBuffer.length === 0) continue;
+
+            const targetTime = Date.now() - INTERPOLATION_DELAY_MS;
+            const buffer = player.positionBuffer;
+
+            if (buffer.length < 2) {
+                player.sprite.setPosition(buffer[0].x, buffer[0].y);
+                continue;
+            }
+
+            let older, newer;
+            for (let i = 0; i < buffer.length - 1; i++) {
+                if (buffer[i].timestamp <= targetTime && buffer[i + 1].timestamp >= targetTime) {
+                    older = buffer[i];
+                    newer = buffer[i + 1];
+                    break;
+                }
+            }
+
+            if (older && newer) {
+                const alpha = (targetTime - older.timestamp) / (newer.timestamp - older.timestamp);
+                const interpX = older.x + (newer.x - older.x) * Math.min(1, Math.max(0, alpha));
+                const interpY = older.y + (newer.y - older.y) * Math.min(1, Math.max(0, alpha));
+                player.sprite.setPosition(interpX, interpY);
+            } else if (buffer.length > 0) {
+                // Extrapolate if no newer position (using last known position)
+                const last = buffer[buffer.length - 1];
+                player.sprite.setPosition(last.x, last.y);
+            }
+        }
+    }
+
+    interpolateEnemies() {
+        for (const id in this.enemies) {
+            const enemy = this.enemies[id];
+            if (enemy.positionBuffer.length === 0) continue;
+
+            const targetTime = Date.now() - INTERPOLATION_DELAY_MS;
+            const buffer = enemy.positionBuffer;
+
+            if (buffer.length < 2) {
+                enemy.container.setPosition(buffer[0].x, buffer[0].y);
+                continue;
+            }
+
+            let older, newer;
+            for (let i = 0; i < buffer.length - 1; i++) {
+                if (buffer[i].timestamp <= targetTime && buffer[i + 1].timestamp >= targetTime) {
+                    older = buffer[i];
+                    newer = buffer[i + 1];
+                    break;
+                }
+            }
+
+            if (older && newer) {
+                const alpha = (targetTime - older.timestamp) / (newer.timestamp - older.timestamp);
+                const interpX = older.x + (newer.x - older.x) * Math.min(1, Math.max(0, alpha));
+                const interpY = older.y + (newer.y - older.y) * Math.min(1, Math.max(0, alpha));
+                enemy.container.setPosition(interpX, interpY);
+            } else if (buffer.length > 0) {
+                const last = buffer[buffer.length - 1];
+                enemy.container.setPosition(last.x, last.y);
+            }
+        }
     }
 
     getPooledCircle(x: number, y: number, radius: number, color: number): Phaser.GameObjects.Graphics {
@@ -704,111 +790,6 @@ export class GameScene extends Phaser.Scene {
         return damageText;
     }
 
-    update(time: number, delta: number) {
-        this.moveTimer -= delta / 1000;
-        if (this.moveTimer <= 0 && this.isConnected && this.localPlayerID) {
-            this.keyState = {
-                W: this.keys.W.isDown,
-                A: this.keys.A.isDown,
-                S: this.keys.S.isDown,
-                D: this.keys.D.isDown,
-                SPACE: this.keys.SPACE.isDown,
-            };
-            const message = JSON.stringify({ type: 'input', data: { id: this.localPlayerID, keys: this.keyState } });
-            try {
-                this.ws.send(message);
-                // console.log('Sent input for local player:', this.localPlayerID, this.keyState);
-            } catch (e) {
-                console.error('Failed to send input:', e);
-            }
-            this.moveTimer = 0.1;
-        }
-
-        // interpolate playres
-        this.interpolatePlayers();
-        this.interpolateEnemies();
-    }
-
-    interpolatePlayers() {
-        for (const id in this.players) {
-            if (this.players.hasOwnProperty(id)) {
-                const player = this.players[id];
-
-                if (player.positionBuffer.length <= 0) continue;
-
-                const lastBufferIndex = player.positionBuffer.length - 1;
-                if (player.positionBuffer.length < 3) {
-                    player.sprite.x = player.positionBuffer[lastBufferIndex].x;
-                    player.sprite.y = player.positionBuffer[lastBufferIndex].y;
-                }
-                else {
-                    var targetTime = Date.now() - INTERPOLATION_DELAY_MS;
-                    var positionBuffer = player.positionBuffer;
-
-                    let older, newer;
-                    for (let i = 0; i < positionBuffer.length - 1; i++) {
-                        if (positionBuffer[i].timestamp <= targetTime && positionBuffer[i + 1].timestamp >= targetTime) {
-                            older = positionBuffer[i];
-                            newer = positionBuffer[i + 1];
-                            break;
-                        }
-                    }
-                
-                    if (older && newer) {
-                        // Normal interpolation
-                        let alpha = (targetTime - older.timestamp) / (newer.timestamp - older.timestamp);
-                        // alpha = Math.min(alpha, 1);
-                        // alpha = Math.max(alpha, 0);
-                        player.sprite.setPosition(
-                            older.x + (newer.x - older.x) * alpha,
-                            older.y + (newer.y - older.y) * alpha
-                        );
-                    }
-                }
-
-                // console.log(player.sprite.x, player.sprite.y);
-            }
-        }
-    }
-
-    interpolateEnemies() {
-        for (const id in this.enemies) {
-            if (this.enemies.hasOwnProperty(id)) {
-                const enemy = this.enemies[id];
-
-                if (enemy.positionBuffer.length <= 0) continue;
-
-                const lastBufferIndex = enemy.positionBuffer.length - 1;
-                if (enemy.positionBuffer.length < 3) {
-                    enemy.container.x = enemy.positionBuffer[lastBufferIndex].x;
-                    enemy.container.y = enemy.positionBuffer[lastBufferIndex].y;
-                } else {
-                    const targetTime = Date.now() - INTERPOLATION_DELAY_MS;
-                    const positionBuffer = enemy.positionBuffer;
-
-                    let older, newer;
-                    for (let i = 0; i < positionBuffer.length - 1; i++) {
-                        if (positionBuffer[i].timestamp <= targetTime && positionBuffer[i + 1].timestamp >= targetTime) {
-                            older = positionBuffer[i];
-                            newer = positionBuffer[i + 1];
-                            break;
-                        }
-                    }
-
-                    if (older && newer) {
-                        // Normal interpolation
-                        let alpha = (targetTime - older.timestamp) / (newer.timestamp - older.timestamp);
-                        alpha = Math.min(1, Math.max(0, alpha));
-                        enemy.container.setPosition(
-                            older.x + (newer.x - older.x) * alpha,
-                            older.y + (newer.y - older.y) * alpha
-                        );
-                    }
-                }
-            }
-        }
-    }
-
     resizeGame() {
         if (!this.cameras.main || !this.scale) return;
 
@@ -823,21 +804,13 @@ export class GameScene extends Phaser.Scene {
         }
 
         this.scale.resize(newWidth, newHeight);
+        const zoom = Math.min(newWidth / GAME_WIDTH, newHeight / GAME_HEIGHT);
+        this.cameras.main.setZoom(zoom / 12);
 
-        const zoomX = newWidth / GAME_WIDTH;
-
-        const zoomY = newHeight / GAME_HEIGHT;
-        const zoom = Math.min(zoomX, zoomY);
-
-        this.cameras.main.setZoom(zoom*1.5);
-
-        // Center the Phaser canvas manually
         const canvas = this.game.canvas;
         canvas.style.position = 'absolute';
         canvas.style.left = '50%';
         canvas.style.top = '50%';
         canvas.style.transform = 'translate(-50%, -50%)';
-
-        // console.log('Resized game to width:', newWidth, 'height:', newHeight);
     }
 }

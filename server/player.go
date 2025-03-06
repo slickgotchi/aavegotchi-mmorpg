@@ -1,103 +1,73 @@
 package main
 
+/*
+package main
+
 import (
+	"encoding/json"
 	"log"
 	"math"
 	"net/http"
-	"sync"
-
-	// "time"
-	"encoding/json"
 	"strconv"
+	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
 
 const (
-	MAX_LEVEL         = 50 // Max level for the game
+	MAX_LEVEL         = 50
 	BASE_XP_PER_LEVEL = 100
-	XP_GROWTH_FACTOR  = 1.5 // Exponential growth factor for XP requirements
+	XP_GROWTH_FACTOR  = 1.5
 )
 
-var totalXpRequiredForLevel = make([]int, MAX_LEVEL+1) // XP needed to reach each level (index 0 unused, 1 to 50)
+var totalXpRequiredForLevel = make([]int, MAX_LEVEL+1)
 
-// Initialize XP requirements in init()
 func init() {
 	for level := 1; level <= MAX_LEVEL; level++ {
 		totalXpRequiredForLevel[level] = int(float64(BASE_XP_PER_LEVEL) * math.Pow(float64(level-1), XP_GROWTH_FACTOR))
 	}
-	// Example XP requirements (adjust as needed):
-	// Level 2: 100, Level 3: 225, Level 3: 405, ..., Level 50: ~1,000,000
 }
 
-// Player struct
 type Player struct {
-	ID        string
-	X         float32
-	Y         float32
-	HP        int
-	MaxHP     int
-	ATK       int
-	AP        int
-	MaxAP     int
-	RGN       float32
-	Speed     float32
-	Conn      *websocket.Conn
-	GotchiID  int
-	IsPlaying bool
-	VelocityX float32
-	VelocityY float32
-	Direction int
-	Mu        sync.RWMutex
-
-	AttackTimerMs    float32
-	AttackIntervalMs float32
-	AttackRadius     float32
-
-	GameXP       int // our in game xp
-	GameLevel    int // our in game level
-	OnchainXP    int // aavegotchi XP onchain
-	OnchainLevel int // aavegotchi level onchain
-
+	ID                      string
+	X                       float32
+	Y                       float32
+	HP                      int
+	MaxHP                   int
+	ATK                     int
+	AP                      int
+	MaxAP                   int
+	RGN                     float32
+	Speed                   float32
+	Conn                    *websocket.Conn
+	GotchiID                int
+	IsPlaying               bool
+	VelocityX               float32
+	VelocityY               float32
+	Direction               int
+	Mu                      sync.RWMutex
+	AttackTimerMs           float32
+	AttackIntervalMs        float32
+	AttackRadius            float32
+	GameXP                  int
+	GameLevel               int
+	OnchainXP               int
+	OnchainLevel            int
 	GameXPOnCurrentLevel    int
 	GameXPTotalForNextLevel int
+	LastUpdate              int64 // For velocity tracking
+	ZoneID                  int   // Track player's zone
+	ConnMu                  sync.Mutex
 }
 
-// PlayerUpdate struct
-type PlayerUpdate struct {
-	ID                      string  `json:"id"`
-	X                       float32 `json:"x"`
-	Y                       float32 `json:"y"`
-	HP                      int     `json:"hp"`
-	MaxHP                   int     `json:"maxHp"`
-	AP                      int     `json:"ap"`
-	MaxAP                   int     `json:"maxAp"`
-	GotchiID                int     `json:"gotchiId"`
-	Timestamp               int64   `json:"timestamp"`
-	Direction               int     `json:"direction"`
-	GameXP                  int     `json:"gameXp"`
-	GameLevel               int     `json:"gameLevel"`
-	GameXPOnCurrentLevel    int     `json:"gameXpOnCurrentLevel"`
-	GameXPTotalForNextLevel int     `json:"gameXpTotalForNextLevel"`
-}
-
-// Global player variables
-var (
-	players          = make(map[string]*Player)
-	playerUpdateChan = make(chan []PlayerUpdate, 1000)
-	mu               sync.RWMutex
-)
-
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  4096,
-	WriteBufferSize: 4096,
-	CheckOrigin: func(r *http.Request) bool {
-		return r.Header.Get("Origin") == "http://localhost:5173"
-	},
-}
-
-// NewPlayer creates a new player instance
 func NewPlayer(conn *websocket.Conn, remoteAddr string) *Player {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Println("Recovered from panic:", r)
+		}
+	}()
+
 	p := &Player{
 		ID:               remoteAddr,
 		X:                float32(MAP_WIDTH_TILES*PIXELS_PER_TILE) / 2,
@@ -118,57 +88,54 @@ func NewPlayer(conn *websocket.Conn, remoteAddr string) *Player {
 		AttackTimerMs:    0,
 		AttackIntervalMs: 1000,
 		AttackRadius:     4 * 32,
-
-		GameXP:    0,
-		GameLevel: 1,
+		GameXP:           0,
+		GameLevel:        1,
+		LastUpdate:       time.Now().UnixMilli(),
+		ZoneID:           0, // Default to zone 0; expand later
 	}
-
-	// add 0 xp to trigger next level calcs etc
+	log.Println("try add xp")
 	addXP(p, 0)
 
-	mu.Lock()
-	players[remoteAddr] = p
-	mu.Unlock()
+	log.Println("Locking zone", p.ZoneID)
+	zones[p.ZoneID].Mu.Lock()
+	zones[p.ZoneID].Players[remoteAddr] = p
+	zones[p.ZoneID].Mu.Unlock()
+
+	log.Println("return player")
 	return p
 }
 
-var cleanupChan = make(chan string, 100)
-
-// HandlePlayerConnection manages WebSocket connection and messages
 func HandlePlayerConnection(w http.ResponseWriter, r *http.Request) {
+	log.Println("try upgrade connection")
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Println("WebSocket upgrade failed:", err)
 		return
 	}
 
+	log.Println("make a new player")
 	p := NewPlayer(conn, r.RemoteAddr)
-
 	welcomeMsg := Message{
 		Type: "welcome",
-		Data: mustMarshal(struct {
-			ID string `json:"id"`
-		}{ID: p.ID}),
+		Data: json.RawMessage(`{"id":"` + p.ID + `"}`), // Send raw JSON
 	}
-
+	p.ConnMu.Lock()
 	if err := conn.WriteJSON(welcomeMsg); err != nil {
 		log.Println("Failed to send welcome to", p.ID, ":", err)
 	}
+	p.ConnMu.Unlock()
 
-	log.Println("Player connection established:", r.RemoteAddr)
+	log.Println("Player connection established:", p.ID) // Add this log
 
 	go func(p *Player) {
 		defer func() {
-			cleanupChan <- p.ID
+			eventChan <- Event{Type: "disconnect", ZoneID: p.ZoneID, PlayerID: p.ID, Timestamp: time.Now().UnixMilli()}
 			p.Conn.Close()
 			log.Println("Client disconnected:", p.ID)
-			disconnectMsg := Message{
+			broadcastMessage(Message{
 				Type: "playerDisconnected",
-				Data: mustMarshal(map[string]interface{}{
-					"id": p.ID,
-				}),
-			}
-			broadcastMessage(disconnectMsg, "")
+				Data: mustMarshal(map[string]interface{}{"id": p.ID}),
+			}, "")
 		}()
 
 		for {
@@ -177,35 +144,37 @@ func HandlePlayerConnection(w http.ResponseWriter, r *http.Request) {
 				log.Println("Read error for", p.ID, ":", err)
 				return
 			}
-
 			var m Message
 			if err := json.Unmarshal(msg, &m); err != nil {
 				log.Println("Failed to unmarshal message from", p.ID, ":", err)
 				continue
 			}
-
-			switch m.Type {
-			case "join":
-				handlePlayerMessageJoin(p, m)
-			case "input":
-				handlePlayerMessageInput(p, m)
+			eventChan <- Event{
+				Type:      m.Type,
+				ZoneID:    p.ZoneID,
+				PlayerID:  p.ID,
+				Data:      m.Data,
+				Timestamp: time.Now().UnixMilli(),
 			}
+			log.Println("Received message from", p.ID, "Type:", m.Type) // Add this log
 		}
 	}(p)
 
 	<-make(chan struct{})
 }
 
-// Add cleanup goroutine in main
 func HandlePlayerCleanup() {
 	for id := range cleanupChan {
-		mu.Lock()
-		delete(players, id)
-		mu.Unlock()
+		for _, zone := range zones {
+			zone.Mu.Lock()
+			if _, exists := zone.Players[id]; exists {
+				delete(zone.Players, id)
+			}
+			zone.Mu.Unlock()
+		}
 	}
 }
 
-// Player message handlers
 func handlePlayerMessageJoin(p *Player, msg Message) {
 	var joinData struct {
 		GotchiID int `json:"gotchiId"`
@@ -215,9 +184,9 @@ func handlePlayerMessageJoin(p *Player, msg Message) {
 		return
 	}
 
-	mu.Lock()
+	p.Mu.Lock()
 	p.GotchiID = joinData.GotchiID
-	mu.Unlock()
+	p.Mu.Unlock()
 
 	log.Println("Player joined with GotchiID:", p.GotchiID)
 
@@ -227,17 +196,17 @@ func handlePlayerMessageJoin(p *Player, msg Message) {
 		return
 	}
 
-	mu.Lock()
+	p.Mu.Lock()
 	p.HP, p.ATK, p.AP, p.RGN, p.Speed = calculateStats(brs)
 	p.MaxHP, p.MaxAP = p.HP, p.AP
 	p.IsPlaying = true
 	p.X = float32(MAP_WIDTH_TILES*PIXELS_PER_TILE) / 2
 	p.Y = float32(MAP_HEIGHT_TILES*PIXELS_PER_TILE) / 2
 	p.Direction = 0
-	mu.Unlock()
+	p.Mu.Unlock()
 }
 
-func handlePlayerMessageInput(p *Player, msg Message) {
+func handlePlayerMessageInput(p *Player, data json.RawMessage) {
 	var inputData struct {
 		ID   string `json:"id"`
 		Keys struct {
@@ -248,12 +217,12 @@ func handlePlayerMessageInput(p *Player, msg Message) {
 			SPACE bool `json:"SPACE"`
 		} `json:"keys"`
 	}
-	if err := json.Unmarshal(msg.Data, &inputData); err != nil {
+	if err := json.Unmarshal(data, &inputData); err != nil {
 		log.Println("Failed to unmarshal input for", p.ID, ":", err)
 		return
 	}
 
-	mu.Lock()
+	p.Mu.Lock()
 	vx, vy := float32(0), float32(0)
 	if inputData.Keys.W {
 		vy -= p.Speed
@@ -271,6 +240,7 @@ func handlePlayerMessageInput(p *Player, msg Message) {
 		norm := float32(math.Sqrt(float64(vx*vx + vy*vy)))
 		p.VelocityX = (vx / norm) * p.Speed
 		p.VelocityY = (vy / norm) * p.Speed
+		p.LastUpdate = time.Now().UnixMilli()
 		if p.VelocityY < 0 {
 			p.Direction = 3
 		}
@@ -283,165 +253,40 @@ func handlePlayerMessageInput(p *Player, msg Message) {
 		if p.VelocityX < 0 {
 			p.Direction = 1
 		}
+	} else {
+		p.VelocityX, p.VelocityY = 0, 0
 	}
-	if math.Abs(float64(vx)) < 0.01 && math.Abs(float64(vy)) < 0.01 {
-		p.VelocityX = 0
-		p.VelocityY = 0
-	}
-	mu.Unlock()
-}
+	p.Mu.Unlock()
 
-// UpdatePlayers handles player movement and state updates
-func UpdatePlayers(tickIntervalMs int, timestamp int64) {
-	// RLock to safely read the "players" map
-	mu.RLock()
-
-	var playerUpdates []PlayerUpdate
-	for _, p := range players {
-		// lock per player to edit because each "p" is a pointer to the actual player
-		p.Mu.Lock()
-
-		p.X += p.VelocityX * float32(tickIntervalMs) * 0.001
-		p.Y += p.VelocityY * float32(tickIntervalMs) * 0.001
-
-		playerUpdates = append(playerUpdates, PlayerUpdate{
-			ID:                      p.ID,
-			X:                       p.X,
-			Y:                       p.Y,
-			HP:                      p.HP,
-			MaxHP:                   p.MaxHP,
-			AP:                      p.AP,
-			MaxAP:                   p.MaxAP,
-			GotchiID:                p.GotchiID,
-			Timestamp:               timestamp,
-			Direction:               p.Direction,
-			GameXP:                  p.GameXP,
-			GameLevel:               p.GameLevel,
-			GameXPOnCurrentLevel:    p.GameXPOnCurrentLevel,
-			GameXPTotalForNextLevel: p.GameXPTotalForNextLevel,
-		})
-
-		// unlock our player
-		p.Mu.Unlock()
-	}
-
-	// RUnlock because we are done reading the "players" map
-	mu.RUnlock()
-
-	if len(playerUpdates) > 0 {
-		select {
-		case playerUpdateChan <- playerUpdates:
-		default:
-			log.Println("GameLoop updateChan full, skipping broadcast")
+	if inputData.Keys.SPACE {
+		eventChan <- Event{
+			Type:      "attack",
+			ZoneID:    p.ZoneID,
+			PlayerID:  p.ID,
+			Timestamp: time.Now().UnixMilli(),
 		}
 	}
+	log.Println("Processed input for", p.ID, "VelocityX:", p.VelocityX, "VelocityY:", p.VelocityY) // Add this log
 }
 
-// HandlePlayerAttacks manages player attack logic
-func HandlePlayerAttacks(tickIntervalMs int, timestamp int64) {
-	var attackUpdates []AttackUpdate
-	var damageUpdates []DamageUpdate
-
-	// lets do a global lock so we can safely iterate over "players" and "Enemies"
-	mu.RLock()
-
-	for _, p := range players {
-		// lock this player
-		p.Mu.Lock()
-
-		playerMinX := p.X - p.AttackRadius - 40*0.5*32 // Extend buffer slightly
-		playerMinY := p.Y - p.AttackRadius - 25*0.5*32
-		playerMaxX := p.X + p.AttackRadius + 40*0.5*32
-		playerMaxY := p.Y + p.AttackRadius + 25*0.5*32
-
-		isEnemiesOnScreen := false
-		for _, e := range Enemies {
-			if e.X > playerMinX && e.X < playerMaxX && e.Y > playerMinY && e.Y < playerMaxY {
-				isEnemiesOnScreen = true
-				break
-			}
-		}
-
-		if isEnemiesOnScreen {
-			p.AttackTimerMs -= float32(tickIntervalMs)
-			if p.AttackTimerMs < 0 {
-				p.AttackTimerMs += p.AttackIntervalMs
-				hitEnemies := make([]string, 0)
-
-				// Use spatial check to reduce enemy iterations
-				for _, e := range Enemies {
-					if e.X < playerMinX || e.X > playerMaxX || e.Y < playerMinY || e.Y > playerMaxY {
-						continue // Skip enemies outside rough range
-					}
-
-					distSq := (e.X-p.X)*(e.X-p.X) + (e.Y-p.Y)*(e.Y-p.Y)
-					if distSq < p.AttackRadius*p.AttackRadius {
-						e.HP -= p.ATK
-						damageUpdates = append(damageUpdates, DamageUpdate{
-							ID:     e.ID,
-							Type:   "enemy",
-							Damage: p.ATK,
-						})
-						hitEnemies = append(hitEnemies, e.ID)
-
-						// Award XP when enemy HP reaches 0
-						if e.HP <= 0 && e.KillerID == "" && !e.IsDeathProcessed {
-							// xpDrop := getXPDropForEnemy(e)
-							// addXP(p, xpDrop)
-							e.KillerID = p.ID
-						}
-					}
-				}
-
-				attackUpdates = append(attackUpdates, AttackUpdate{
-					AttackerID: p.ID,
-					HitIDs:     hitEnemies,
-					Type:       "playerAttack",
-					Radius:     p.AttackRadius,
-					X:          p.X,
-					Y:          p.Y,
-				})
-			}
-		}
-		mu.Unlock()
-	}
-
-	if len(attackUpdates) > 0 {
-		attackUpdateChan <- attackUpdates
-	}
-	if len(damageUpdates) > 0 {
-		damageUpdateChan <- damageUpdates
-	}
-}
-
-// getXPDropForEnemy returns XP directly from the enemy instance
-// func getXPDropForEnemy(e *Enemy) int {
-// 	return e.XPDrop // Use the stored XP drop if added to Enemy struct
-// }
-
-// addXP adds XP to a player, handles level-ups, and updates stats
 func addXP(p *Player, amount int) {
+	p.Mu.Lock()
+	defer p.Mu.Unlock()
 	p.GameXP += amount
 
-	log.Println("add XP")
-
-	// Calculate current progress
 	totalXpRequiredForCurrentLevel := totalXpRequiredForLevel[p.GameLevel]
 	totalXpRequiredForNextLevel := totalXpRequiredForLevel[p.GameLevel+1]
 	p.GameXPOnCurrentLevel = p.GameXP - totalXpRequiredForCurrentLevel
 	p.GameXPTotalForNextLevel = totalXpRequiredForNextLevel - totalXpRequiredForCurrentLevel
 
-	// Check for level-up
 	for p.GameXP >= totalXpRequiredForLevel[p.GameLevel+1] && p.GameLevel < MAX_LEVEL {
 		p.GameLevel++
-		// Increase ATK by 10% on level-up
-		p.ATK = int(float64(p.ATK) * 1.1) // Round down to integer
+		p.ATK = int(float64(p.ATK) * 1.1)
 		totalXpRequiredForCurrentLevel = totalXpRequiredForLevel[p.GameLevel]
 		totalXpRequiredForNextLevel = totalXpRequiredForLevel[p.GameLevel+1]
 		p.GameXPOnCurrentLevel = p.GameXP - totalXpRequiredForCurrentLevel
 		p.GameXPTotalForNextLevel = totalXpRequiredForNextLevel - totalXpRequiredForCurrentLevel
 
-		// Send level-up message to the player
 		levelUpMsg := Message{
 			Type: "levelUp",
 			Data: mustMarshal(struct {
@@ -456,10 +301,11 @@ func addXP(p *Player, amount int) {
 				GameXPTotalForNextLevel: p.GameXPTotalForNextLevel,
 			}),
 		}
+		p.ConnMu.Lock() // Lock WebSocket write
 		if err := p.Conn.WriteJSON(levelUpMsg); err != nil {
 			log.Println("Failed to send level-up message to", p.ID, ":", err)
-		} else {
-			log.Println("Sent level-up message to", p.ID, "for level", p.GameLevel)
 		}
+		p.ConnMu.Unlock() // Unlock WebSocket write
 	}
 }
+*/

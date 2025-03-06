@@ -1,26 +1,460 @@
 package main
 
 import (
+	"fmt"
+	"log"
+	"math/rand"
+	"net/http"
+	"time"
+
+	"runtime"
+
+	"github.com/gorilla/websocket"
+)
+
+// Config constants
+const (
+	NumZones     = 9
+	TickInterval = 100 * time.Millisecond
+	ZoneWidth    = 256 // Tiles
+	ZoneHeight   = 256 // Tiles
+	TileSize     = 32  // Pixels
+)
+
+// Message is a generic struct for client/server communication
+type Message struct {
+	Type string      `json:"type"`
+	Data interface{} `json:"data"`
+}
+
+// Zone represents an independent game zone
+type Zone struct {
+	ID      int
+	X, Y    int // Grid position (e.g., 0,0 for bottom-left)
+	Players map[string]*Player
+	Enemies map[string]*Enemy
+	Inbound chan Message
+}
+
+// Player represents a player entity
+type Player struct {
+	ID     string
+	ZoneID int
+	X, Y   float32 // Tile coordinates
+	VX, VY float32 // Tiles per second
+	Conn   *websocket.Conn
+}
+
+// Enemy represents an enemy entity
+type Enemy struct {
+	ID     string
+	ZoneID int
+	X, Y   float32 // Tile coordinates
+	VX, VY float32 // Tiles per second
+	State  string  // "Spawn", "Roam", etc.
+}
+
+// GameServer holds the overall state
+type GameServer struct {
+	Zones []*Zone
+}
+
+// PlayerUpdate represents player data sent to clients
+type PlayerUpdate struct {
+	PlayerID string  `json:"playerId"`
+	X        float32 `json:"x"`
+	Y        float32 `json:"y"`
+	ZoneID   int     `json:"zoneId"`
+}
+
+// EnemyUpdate represents enemy data sent to clients
+type EnemyUpdate struct {
+	EnemyID string  `json:"enemyId"`
+	X       float32 `json:"x"`
+	Y       float32 `json:"y"`
+	ZoneID  int     `json:"zoneId"`
+}
+
+var upgrader = websocket.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
+	CheckOrigin: func(r *http.Request) bool {
+		return r.Header.Get("Origin") == "http://localhost:5173"
+	},
+}
+
+// NewGameServer initializes the server
+func NewGameServer() *GameServer {
+	gs := &GameServer{
+		Zones: make([]*Zone, NumZones),
+	}
+
+	// Initialize 3x3 grid of zones
+	for i := 0; i < NumZones; i++ {
+		x := i % 3 // Column
+		y := i / 3 // Row
+		gs.Zones[i] = &Zone{
+			ID:      i,
+			X:       x,
+			Y:       y,
+			Players: make(map[string]*Player),
+			Enemies: make(map[string]*Enemy),
+			Inbound: make(chan Message, 100),
+		}
+		// Spawn 500 enemies
+		for j := 0; j < 500; j++ {
+			enemyID := fmt.Sprintf("enemy%d_%d", i, j)
+			gs.Zones[i].Enemies[enemyID] = &Enemy{
+				ID:     enemyID,
+				ZoneID: i,
+				X:      float32(rand.Intn(ZoneWidth)),
+				Y:      float32(rand.Intn(ZoneHeight)),
+				VX:     float32(rand.Intn(3) - 1), // -1 to 1 tiles/sec
+				VY:     float32(rand.Intn(3) - 1),
+				State:  "Spawn",
+			}
+		}
+	}
+
+	return gs
+}
+
+// StartWorkers launches one worker goroutine per zone
+func (gs *GameServer) StartWorkers() {
+	for _, zone := range gs.Zones {
+		go gs.worker(zone)
+	}
+}
+
+// worker handles updates for a single zone
+func (gs *GameServer) worker(zone *Zone) {
+	ticker := time.NewTicker(TickInterval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		gs.processZone(zone)
+	}
+}
+
+// processZone updates a single zone synchronously
+func (gs *GameServer) processZone(zone *Zone) {
+	// Process inbound messages
+	for len(zone.Inbound) > 0 {
+		msg := <-zone.Inbound
+		switch msg.Type {
+		case "input":
+			// Deserialize data into a map
+			if data, ok := msg.Data.(map[string]interface{}); ok {
+				playerID, pidOk := data["playerId"].(string)
+				if !pidOk {
+					continue
+				}
+				player := zone.Players[playerID]
+				if player == nil {
+					continue
+				}
+
+				// Extract keys object
+				if keys, ok := data["keys"].(map[string]interface{}); ok {
+					player.VX = 0
+					player.VY = 0
+					speed := float32(100 * TileSize) // 100 tiles/sec
+					if w, ok := keys["W"].(bool); ok && w {
+						player.VY = -speed
+					}
+					if s, ok := keys["S"].(bool); ok && s {
+						player.VY = speed
+					}
+					if a, ok := keys["A"].(bool); ok && a {
+						player.VX = -speed
+					}
+					if d, ok := keys["D"].(bool); ok && d {
+						player.VX = speed
+					}
+					// SPACE key can be processed here if needed
+					if space, ok := keys["SPACE"].(bool); ok && space {
+						// Placeholder for future action (e.g., jump, attack)
+						log.Printf("Player %s pressed SPACE in Zone %d", playerID, zone.ID)
+					}
+				}
+			}
+		default:
+			log.Printf("Unhandled message type in Zone %d: %s", zone.ID, msg.Type)
+		}
+	}
+
+	// Update players
+	dt := float32(TickInterval.Seconds()) // ~0.1s
+	for _, player := range zone.Players {
+		player.X += player.VX * dt
+		player.Y += player.VY * dt
+		newZoneID := gs.calculateZoneID(player.X, player.Y)
+		if newZoneID != player.ZoneID {
+			gs.switchZone(player, zone, newZoneID)
+			continue
+		}
+	}
+
+	// Update enemies
+	for _, enemy := range zone.Enemies {
+		switch enemy.State {
+		case "Spawn":
+			enemy.State = "Roam" // Transition after one tick
+		case "Roam":
+			enemy.X += enemy.VX * dt
+			enemy.Y += enemy.VY * dt
+			// Simple bounds check
+			if enemy.X < 0 || enemy.X >= ZoneWidth {
+				enemy.VX = -enemy.VX
+				enemy.X = clamp(enemy.X, 0, ZoneWidth-1)
+			}
+			if enemy.Y < 0 || enemy.Y >= ZoneHeight {
+				enemy.VY = -enemy.VY
+				enemy.Y = clamp(enemy.Y, 0, ZoneHeight-1)
+			}
+		}
+	}
+
+	// Prepare updates
+	playerUpdates := make([]PlayerUpdate, 0, len(zone.Players))
+	enemyUpdates := make([]EnemyUpdate, 0, len(zone.Enemies))
+	for _, p := range zone.Players {
+		playerUpdates = append(playerUpdates, PlayerUpdate{
+			PlayerID: p.ID,
+			X:        p.X,
+			Y:        p.Y,
+			ZoneID:   p.ZoneID,
+		})
+	}
+	for _, e := range zone.Enemies {
+		enemyUpdates = append(enemyUpdates, EnemyUpdate{
+			EnemyID: e.ID,
+			X:       e.X,
+			Y:       e.Y,
+			ZoneID:  e.ZoneID,
+		})
+	}
+
+	// Send updates synchronously at tick interval
+	for _, player := range zone.Players {
+		batch := []Message{
+			{Type: "playerUpdates", Data: playerUpdates},
+			{Type: "enemyUpdates", Data: enemyUpdates},
+		}
+		if err := player.Conn.WriteJSON(batch); err != nil {
+			log.Printf("Error sending to %s: %v", player.ID, err)
+		}
+	}
+}
+
+// clamp restricts a value to a range
+func clamp(val, min, max float32) float32 {
+	if val < min {
+		return min
+	}
+	if val > max {
+		return max
+	}
+	return val
+}
+
+// calculateZoneID determines the zone based on tile coordinates
+func (gs *GameServer) calculateZoneID(x, y float32) int {
+	zoneX := int(x) / ZoneWidth
+	zoneY := int(y) / ZoneHeight
+	if zoneX < 0 || zoneX >= 3 || zoneY < 0 || zoneY >= 3 {
+		return 0 // Clamp to bottom-left for now
+	}
+	return zoneX + zoneY*3 // 3x3 grid
+}
+
+// switchZone transfers a player
+func (gs *GameServer) switchZone(player *Player, oldZone *Zone, newZoneID int) {
+	log.Println("deleting ", player.ID, " from zone ", oldZone.ID)
+	delete(oldZone.Players, player.ID)
+	player.ZoneID = newZoneID
+	log.Println("set to new zone: ", player.ZoneID)
+	player.VX = 0
+	player.VY = 0
+	newZone := gs.Zones[newZoneID]
+	newZone.Players[player.ID] = player
+	log.Printf("Player %s switched from Zone %d (%d,%d) to Zone %d (%d,%d)",
+		player.ID, oldZone.ID, oldZone.X, oldZone.Y, newZone.ID, newZone.X, newZone.Y)
+}
+
+// findPlayerZone finds the current zone of a player
+func (gs *GameServer) findPlayerZone(playerID string) *Zone {
+	for _, zone := range gs.Zones {
+		if _, exists := zone.Players[playerID]; exists {
+			return zone
+		}
+	}
+	return nil
+}
+
+// handleWebSocket handles client connections
+func (gs *GameServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("WebSocket upgrade failed: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	playerID := fmt.Sprintf("player%d", time.Now().UnixNano())
+	player := &Player{
+		ID:     playerID,
+		ZoneID: 0,                           // Bottom-left zone
+		X:      1.5 * ZoneWidth * TileSize,  // Center of zone 0
+		Y:      1.5 * ZoneHeight * TileSize, // Center of zone 0
+		Conn:   conn,
+	}
+	initialZone := gs.Zones[0]
+	initialZone.Players[playerID] = player
+	log.Printf("Player %s spawned in Zone %d (%d,%d)", playerID, initialZone.ID, initialZone.X, initialZone.Y)
+
+	for {
+		var msg Message
+		if err := conn.ReadJSON(&msg); err != nil {
+			log.Printf("Error reading from %s: %v", playerID, err)
+			break
+		}
+		// Route input to the player's current zone
+		currentZone := gs.findPlayerZone(playerID)
+		if currentZone != nil {
+			select {
+			case currentZone.Inbound <- msg:
+				// Successfully sent to current zone
+			default:
+				log.Printf("Inbound channel full for Zone %d, dropping input for %s", currentZone.ID, playerID)
+			}
+		} else {
+			// Player not found (e.g., disconnected or not yet spawned), use initial zone as fallback
+			log.Printf("Player %s not found in any zone, sending to initial Zone 0", playerID)
+			select {
+			case initialZone.Inbound <- msg:
+				// Sent to initial zone
+			default:
+				log.Printf("Inbound channel full for initial Zone 0, dropping input for %s", playerID)
+			}
+		}
+	}
+
+	// Cleanup on disconnect
+	currentZone := gs.findPlayerZone(playerID)
+	if currentZone != nil {
+		delete(currentZone.Players, playerID)
+	} else {
+		delete(initialZone.Players, playerID)
+	}
+	log.Printf("Player %s disconnected", playerID)
+}
+
+func main() {
+	runtime.GOMAXPROCS(runtime.NumCPU()) // Adapt to available cores
+	gs := NewGameServer()
+
+	gs.StartWorkers()
+
+	http.HandleFunc("/ws", gs.handleWebSocket)
+	log.Println("Starting WebSocket server on :8080")
+	if err := http.ListenAndServe(":8080", nil); err != nil {
+		log.Fatalf("WebSocket server failed: %v", err)
+	}
+}
+
+/*
+package main
+
+import (
 	"bytes"
 	"encoding/json"
+	"flag"
 	"log"
-
-	// "math"
-
-	// "math/rand"
+	"net"
 	"net/http"
+	"os"
+	"runtime"
 	"strconv"
-
-	// "sync"
+	"sync"
 	"time"
-	// "github.com/gorilla/websocket"
+
+	"github.com/gorilla/websocket"
 )
 
 var httpClient = &http.Client{
 	Timeout: 5 * time.Second,
 }
 
-// EnemyUpdate struct for broadcasting enemy state to clients
+type Config struct {
+	NumWorkers int
+	NumZones   int
+}
+
+var config Config
+
+func initConfig() {
+	flag.IntVar(&config.NumWorkers, "workers", runtime.NumCPU(), "Number of worker goroutines (defaults to CPU threads)")
+	flag.IntVar(&config.NumZones, "zones", 1, "Number of 256x256 zones (1-64)")
+	flag.Parse()
+
+	if config.NumWorkers < 1 {
+		config.NumWorkers = 1
+	} else if config.NumWorkers > 64 {
+		config.NumWorkers = 64
+	}
+	if config.NumZones < 1 {
+		config.NumZones = 1
+	} else if config.NumZones > 64 {
+		config.NumZones = 64
+	}
+	log.Printf("Config: %d workers, %d zones", config.NumWorkers, config.NumZones)
+}
+
+type Zone struct {
+	ID        int
+	Mu        sync.RWMutex
+	Players   map[string]*Player
+	Enemies   map[string]*Enemy
+	EventChan chan Event
+	Tilemap   *Tilemap
+}
+
+type Worker struct {
+	ID        int
+	Zones     map[int]*Zone
+	EventChan chan Event
+}
+
+type Event struct {
+	Type      string
+	ZoneID    int
+	PlayerID  string
+	EnemyID   string
+	Data      interface{}
+	Timestamp int64
+}
+
+type Tilemap struct {
+	Layers []TilemapLayer
+}
+
+type PlayerUpdate struct {
+Zone int	`json:`
+	ID        string  `json:"id"`
+	X         float32 `json:"x"`
+	Y         float32 `json:"y"`
+	HP        int     `json:"hp"`
+	MaxHP     int     `json:"maxHp"`
+	AP        int     `json:"ap"`
+	MaxAP     int     `json:"maxAp"`
+	GotchiID  int     `json:"gotchiId"`
+	Timestamp int64   `json:"timestamp"`
+	Direction int     `json:"direction"`
+	GameXP    int     `json:"gameXp"`
+	GameLevel int     `json:"gameLevel"`
+}
+
 type EnemyUpdate struct {
 	ID        string  `json:"id"`
 	X         float32 `json:"x"`
@@ -52,162 +486,416 @@ type DamageUpdate struct {
 	Damage int    `json:"damage"`
 }
 
-type Input struct {
-	ID  string
-	Msg Message
-}
-
 var (
-	// players          = make(map[string]*Player)
-	// playerUpdateChan = make(chan []PlayerUpdate, 1000)
+	zones            []*Zone
+	workers          []*Worker
+	eventChan        = make(chan Event, 10000)
+	playerUpdateChan = make(chan []PlayerUpdate, 1000)
+	Zone int	`json:`
+	Zone int	`json:`
 	enemyUpdateChan  = make(chan []EnemyUpdate, 1000)
 	attackUpdateChan = make(chan []AttackUpdate, 1000)
 	damageUpdateChan = make(chan []DamageUpdate, 1000)
-	// mu               sync.RWMutex
-	TICK_INTERVAL_MS int = 100
-	MAP_WIDTH_TILES  int = 256
-	MAP_HEIGHT_TILES int = 256
-	PIXELS_PER_TILE  int = 32
+	cleanupChan      = make(chan string, 100)
+	TICK_INTERVAL_MS = 16
+	MAP_WIDTH_TILES  = 256
+	MAP_HEIGHT_TILES = 256
+	PIXELS_PER_TILE  = 32
 )
 
+var upgrader = websocket.Upgrader{
+	ReadBufferSize:  4096,
+	WriteBufferSize: 4096,
+	CheckOrigin: func(r *http.Request) bool {
+		return r.Header.Get("Origin") == "http://localhost:5173"
+	},
+}
+
+func initZonesAndWorkers() {
+	zones = make([]*Zone, config.NumZones)
+	var wg sync.WaitGroup
+	tilemapData, err := os.ReadFile("../shared/tilemap/mmorpg.json")
+	if err != nil {
+		log.Fatal("Failed to read tilemap file:", err)
+	}
+	var tilemap struct {
+		Layers []TilemapLayer `json:"layers"`
+	}
+	if err := json.Unmarshal(tilemapData, &tilemap); err != nil {
+		log.Fatal("Failed to parse tilemap JSON:", err)
+	}
+	sharedTilemap := &Tilemap{Layers: tilemap.Layers}
+	log.Println("Loaded shared tilemap for all zones")
+
+	for i := 0; i < config.NumZones; i++ {
+		zones[i] = &Zone{
+			ID:        i,
+			Players:   make(map[string]*Player),
+			Enemies:   make(map[string]*Enemy),
+			EventChan: make(chan Event, 1000),
+			Tilemap:   sharedTilemap,
+		}
+		wg.Add(1)
+		go func(zone *Zone) {
+			defer wg.Done()
+			for _, layer := range sharedTilemap.Layers {
+				processLayer(zone, layer, "")
+			}
+			log.Println("Initialized zone", zone.ID)
+		}(zones[i])
+	}
+
+	workers = make([]*Worker, config.NumWorkers)
+	zonesPerWorker := config.NumZones / config.NumWorkers
+	extraZones := config.NumZones % config.NumWorkers
+	zoneIndex := 0
+	for i := 0; i < config.NumWorkers; i++ {
+		numZones := zonesPerWorker
+		if i < extraZones {
+			numZones++
+		}
+		workerZones := make(map[int]*Zone)
+		for j := 0; j < numZones && zoneIndex < config.NumZones; j++ {
+			workerZones[zones[zoneIndex].ID] = zones[zoneIndex]
+			log.Println("Assigned zone", zones[zoneIndex].ID, "to worker", i)
+			zoneIndex++
+		}
+		workers[i] = &Worker{
+			ID:        i,
+			Zones:     workerZones,
+			EventChan: make(chan Event, 1000),
+		}
+		go workers[i].Run()
+	}
+	go distributeEvents()
+
+	wg.Wait()
+	log.Println("All zones initialized")
+}
+
+func distributeEvents() {
+	for event := range eventChan {
+		for _, worker := range workers {
+			if _, ok := worker.Zones[event.ZoneID]; ok {
+				select {
+				case worker.EventChan <- event:
+					log.Println("Distributed event Type:", event.Type, "to worker", worker.ID)
+				default:
+					log.Println("Worker", worker.ID, "EventChan full, dropping event Type:", event.Type)
+				}
+				break
+			}
+		}
+	}
+}
+
+func (w *Worker) Run() {
+	ticker := time.NewTicker(time.Duration(TICK_INTERVAL_MS) * time.Millisecond)
+	defer ticker.Stop()
+
+	log.Println("Worker", w.ID, "started, listening on eventChan")
+	for {
+		select {
+		case event := <-w.EventChan:
+			if zone, ok := w.Zones[event.ZoneID]; ok {
+				w.processEvent(zone, event)
+				log.Println("Worker", w.ID, "processed event Type:", event.Type, "for PlayerID:", event.PlayerID)
+			} else {
+				log.Println("Worker", w.ID, "no zone for ZoneID:", event.ZoneID)
+			}
+		case now := <-ticker.C:
+			for _, zone := range w.Zones {
+				log.Println("lock zone in RUn()")
+				zone.Mu.Lock()
+				for _, p := range zone.Players {
+					w.updatePlayerPosition(p, now.UnixMilli())
+				}
+				for _, e := range zone.Enemies {
+					w.updateEnemy(e, now.UnixMilli())
+				}
+				w.broadcastUpdates(zone, now.UnixMilli())
+				zone.Mu.Unlock()
+				log.Println("unlock zone in Run()")
+			}
+		}
+	}
+}
+
+func (w *Worker) processEvent(zone *Zone, event Event) {
+	switch event.Type {
+	case "join":
+		p := zone.Players[event.PlayerID]
+		handlePlayerMessageJoin(p, Message{Type: "join", Data: event.Data.(json.RawMessage)})
+	case "input":
+		p := zone.Players[event.PlayerID]
+		if p != nil {
+			handlePlayerMessageInput(p, event.Data.(json.RawMessage))
+		} else {
+			log.Println("Player", event.PlayerID, "not found in zone", event.ZoneID)
+		}
+	case "disconnect":
+		delete(zone.Players, event.PlayerID)
+	case "attack":
+		w.handlePlayerAttack(zone, event)
+	}
+}
+
+func (w *Worker) updatePlayerPosition(p *Player, now int64) {
+	p.Mu.Lock()
+	defer p.Mu.Unlock()
+	deltaTime := float32(now-p.LastUpdate) / 1000.0
+	p.X += p.VelocityX * deltaTime
+	p.Y += p.VelocityY * deltaTime
+	p.LastUpdate = now
+	log.Println("Updated position for", p.ID, "X:", p.X, "Y:", p.Y)
+}
+
+func (w *Worker) updateEnemy(e *Enemy, now int64) {
+	e.Mu.Lock()
+	defer e.Mu.Unlock()
+	deltaTime := float32(now-e.LastUpdate) / 1000.0
+	e.X += e.VelocityX * deltaTime
+	e.Y += e.VelocityY * deltaTime
+	e.LastUpdate = now
+}
+
+func (w *Worker) handlePlayerAttack(zone *Zone, event Event) {
+	p := zone.Players[event.PlayerID]
+	if p == nil {
+		return
+	}
+	p.Mu.Lock()
+	defer p.Mu.Unlock()
+
+	var attackUpdates []AttackUpdate
+	var damageUpdates []DamageUpdate
+	playerMinX := p.X - p.AttackRadius - 40*0.5*32
+	playerMinY := p.Y - p.AttackRadius - 25*0.5*32
+	playerMaxX := p.X + p.AttackRadius + 40*0.5*32
+	playerMaxY := p.Y + p.AttackRadius + 25*0.5*32
+
+	p.AttackTimerMs -= float32(TICK_INTERVAL_MS)
+	if p.AttackTimerMs < 0 {
+		p.AttackTimerMs += p.AttackIntervalMs
+		hitEnemies := make([]string, 0)
+		for _, e := range zone.Enemies {
+			if e.X < playerMinX || e.X > playerMaxX || e.Y < playerMinY || e.Y > playerMaxY {
+				continue
+			}
+			distSq := (e.X-p.X)*(e.X-p.X) + (e.Y-p.Y)*(e.Y-p.Y)
+			if distSq < p.AttackRadius*p.AttackRadius {
+				e.Mu.Lock()
+				e.HP -= p.ATK
+				damageUpdates = append(damageUpdates, DamageUpdate{
+					ID:     e.ID,
+					Type:   "enemy",
+					Damage: p.ATK,
+				})
+				hitEnemies = append(hitEnemies, e.ID)
+				if e.HP <= 0 && e.KillerID == "" && !e.IsDeathProcessed {
+					e.KillerID = p.ID
+					OnDeath(e, p.ID)
+				}
+				e.Mu.Unlock()
+			}
+		}
+		attackUpdates = append(attackUpdates, AttackUpdate{
+			AttackerID: p.ID,
+			HitIDs:     hitEnemies,
+			Type:       "playerAttack",
+			Radius:     p.AttackRadius,
+			X:          p.X,
+			Y:          p.Y,
+		})
+	}
+	if len(attackUpdates) > 0 {
+		attackUpdateChan <- attackUpdates
+	}
+	if len(damageUpdates) > 0 {
+		damageUpdateChan <- damageUpdates
+	}
+}
+
+func (w *Worker) broadcastUpdates(zone *Zone, timestamp int64) {
+	var playerUpdates []PlayerUpdate
+	Zone int	`json:`
+	Zone int	`json:`
+	var enemyUpdates []EnemyUpdate
+	for _, p := range zone.Players {
+		p.Mu.RLock()
+		playerUpdates = append(playerUpdates, PlayerUpdate{
+		Zone int	`json:`
+		Zone int	`json:`
+		Zone int	`json:`
+			ID:        p.ID,
+			X:         p.X,
+			Y:         p.Y,
+			HP:        p.HP,
+			MaxHP:     p.MaxHP,
+			AP:        p.AP,
+			MaxAP:     p.MaxAP,
+			GotchiID:  p.GotchiID,
+			Timestamp: timestamp,
+			Direction: p.Direction,
+			GameXP:    p.GameXP,
+			GameLevel: p.GameLevel,
+		})
+		p.Mu.RUnlock()
+	}
+	for _, e := range zone.Enemies {
+		e.Mu.RLock()
+		if e.IsAlive {
+			enemyUpdates = append(enemyUpdates, EnemyUpdate{
+				ID:        e.ID,
+				X:         e.X,
+				Y:         e.Y,
+				HP:        e.HP,
+				MaxHP:     e.MaxHP,
+				Type:      e.Type,
+				Timestamp: timestamp,
+				Direction: e.Direction,
+			})
+		}
+		e.Mu.RUnlock()
+	}
+	if len(playerUpdates) > 0 {
+	Zone int	`json:`
+		select {
+		case playerUpdateChan <- playerUpdates:
+			Zone int	`json:`
+			Zone int	`json:`
+			log.Println("Broadcasted player updates:", len(playerUpdates))
+			Zone int	`json:`
+		default:
+			log.Println("playerUpdateChan full, skipping broadcast")
+			Zone int	`json:`
+		}
+	}
+	if len(enemyUpdates) > 0 {
+		enemyUpdateChan <- enemyUpdates
+	}
+}
+
 func wsHandler(w http.ResponseWriter, r *http.Request) {
+	log.Println("Received WebSocket connection attempt from", r.RemoteAddr) // Log here
 	HandlePlayerConnection(w, r)
 }
 
-func GameLoop(updateChan chan<- []PlayerUpdate) {
-	ticker := time.NewTicker(time.Duration(TICK_INTERVAL_MS) * time.Millisecond)
-	defer func() {
-		log.Println("GameLoop ticker stopped")
-		ticker.Stop()
-	}()
-
+func BroadcastLoopEnemyUpdates(enemyUpdateChan <-chan []EnemyUpdate) {
+	ticker := time.NewTicker(60 * time.Millisecond)
+	defer ticker.Stop()
 	for range ticker.C {
-		if len(players) <= 0 {
-			continue
+		select {
+		case updates := <-enemyUpdateChan:
+			for _, zone := range zones {
+				log.Println("lock zone in broadcastenemyupdates")
+				zone.Mu.RLock()
+				for _, p := range zone.Players {
+					p.ConnMu.Lock()
+					if err := p.Conn.WriteJSON(Message{Type: "enemyUpdates", Data: mustMarshal(updates)}); err != nil {
+						log.Println("Failed to broadcast enemy updates to", p.ID, ":", err)
+					}
+					p.ConnMu.Unlock()
+				}
+				zone.Mu.RUnlock()
+				log.Println("unlock zone in broadcastenemyupdates")
+			}
+		default:
 		}
-
-		UpdatePlayers(TICK_INTERVAL_MS, time.Now().UnixMilli())
-		HandlePlayerAttacks(TICK_INTERVAL_MS, time.Now().UnixMilli())
-
-		UpdateEnemies(TICK_INTERVAL_MS, time.Now().UnixMilli())
 	}
 }
 
 func BroadcastLoopPlayerUpdates(playerUpdateChan <-chan []PlayerUpdate) {
-	ticker := time.NewTicker(time.Duration(TICK_INTERVAL_MS) * time.Millisecond)
+Zone int	`json:`
+Zone int	`json:`
+Zone int	`json:`
+	ticker := time.NewTicker(60 * time.Millisecond)
 	defer ticker.Stop()
-
 	for range ticker.C {
 		select {
-		case playerUpdates := <-playerUpdateChan:
-			mu.Lock()
-			for _, p := range players {
-				if err := p.Conn.WriteJSON(Message{
-					Type: "playerUpdates",
-					Data: mustMarshal(playerUpdates),
-				}); err != nil {
-					log.Println("Failed to broadcast player updates to", p.ID, ":", err)
-				} else {
-					// log.Println("Sent player updates to", p.ID, "count:", len(playerUpdates))
+		case updates := <-playerUpdateChan:
+			Zone int	`json:`
+			for _, zone := range zones {
+				log.Println("lock zone in updates")
+				zone.Mu.RLock()
+				for _, p := range zone.Players {
+					p.ConnMu.Lock()
+					if err := p.Conn.WriteJSON(Message{Type: "playerUpdates", Data: mustMarshal(updates)}); err != nil {
+					Zone int	`json:`
+						log.Println("Failed to broadcast player updates to", p.ID, ":", err)
+					}
+					p.ConnMu.Unlock()
 				}
+				zone.Mu.RUnlock()
+				log.Println("unlock zone in updates")
 			}
-			mu.Unlock()
 		default:
-			break
 		}
 	}
 }
 
-func BroadcastLoopEnemyUpdates(enemyUpdatechan <-chan []EnemyUpdate) {
-	ticker := time.NewTicker(time.Duration(TICK_INTERVAL_MS) * time.Millisecond)
+func BroadcastLoopAttackUpdates(attackUpdateChan <-chan []AttackUpdate) {
+	ticker := time.NewTicker(60 * time.Millisecond)
 	defer ticker.Stop()
-
 	for range ticker.C {
 		select {
-		case enemyUpdates := <-enemyUpdateChan:
-			mu.Lock()
-			for _, p := range players {
-				if err := p.Conn.WriteJSON(Message{
-					Type: "enemyUpdates",
-					Data: mustMarshal(enemyUpdates),
-				}); err != nil {
-					log.Println("Failed to broadcast player updates to", p.ID, ":", err)
-				} else {
-					// log.Println("Sent player updates to", p.ID, "count:", len(updates))
+		case updates := <-attackUpdateChan:
+			for _, zone := range zones {
+				log.Println("lock zone in updates")
+				zone.Mu.RLock()
+				for _, p := range zone.Players {
+					p.ConnMu.Lock()
+					if err := p.Conn.WriteJSON(Message{Type: "attackUpdates", Data: mustMarshal(updates)}); err != nil {
+						log.Println("Failed to broadcast attack updates to", p.ID, ":", err)
+					}
+					p.ConnMu.Unlock()
 				}
+				zone.Mu.RUnlock()
+				log.Println("unlock zone in updates")
 			}
-			mu.Unlock()
 		default:
-			break
 		}
 	}
 }
 
-func BroadcastLoopAttackUpdates(attackUpdatechan <-chan []AttackUpdate) {
-	ticker := time.NewTicker(time.Duration(TICK_INTERVAL_MS) * time.Millisecond)
+func BroadcastLoopDamageUpdates(damageUpdateChan <-chan []DamageUpdate) {
+	ticker := time.NewTicker(60 * time.Millisecond)
 	defer ticker.Stop()
-
 	for range ticker.C {
 		select {
-		case attackUpdates := <-attackUpdateChan:
-			mu.Lock()
-			for _, p := range players {
-				if err := p.Conn.WriteJSON(Message{
-					Type: "attackUpdates",
-					Data: mustMarshal(attackUpdates),
-				}); err != nil {
-					log.Println("Failed to broadcast player updates to", p.ID, ":", err)
-				} else {
-					// log.Println("Sent player updates to", p.ID, "count:", len(updates))
+		case updates := <-damageUpdateChan:
+			for _, zone := range zones {
+				log.Println("lock zone in updates")
+				zone.Mu.RLock()
+				for _, p := range zone.Players {
+					p.ConnMu.Lock()
+					if err := p.Conn.WriteJSON(Message{Type: "damageUpdates", Data: mustMarshal(updates)}); err != nil {
+						log.Println("Failed to broadcast damage updates to", p.ID, ":", err)
+					}
+					p.ConnMu.Unlock()
 				}
+				zone.Mu.RUnlock()
+				log.Println("unlock zone in updates")
 			}
-			mu.Unlock()
 		default:
-			break
 		}
 	}
 }
 
-func BroadcastLoopDamageUpdates(damageUpdatechan <-chan []DamageUpdate) {
-	ticker := time.NewTicker(time.Duration(TICK_INTERVAL_MS) * time.Millisecond)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		select {
-		case damageUpdates := <-damageUpdatechan:
-			mu.Lock()
-			for _, p := range players {
-				if err := p.Conn.WriteJSON(Message{
-					Type: "damageUpdates",
-					Data: mustMarshal(damageUpdates),
-				}); err != nil {
-					log.Println("Failed to broadcast player updates to", p.ID, ":", err)
-				} else {
-					// log.Println("Sent player updates to", p.ID, "count:", len(updates))
-				}
-			}
-			mu.Unlock()
-		default:
-			break
-		}
-	}
-}
-
-// Broadcasts a message to all players except the specified ID (optional)
 func broadcastMessage(msg Message, excludeID string) {
-	mu.RLock()
-	defer mu.RUnlock()
-	for id, p := range players {
-		mu.RLock()
-		if excludeID != "" && id == excludeID {
-			continue
+	for _, zone := range zones {
+		zone.Mu.RLock()
+		for id, p := range zone.Players {
+			if excludeID != "" && id == excludeID {
+				continue
+			}
+			p.ConnMu.Lock()
+			if err := p.Conn.WriteJSON(msg); err != nil {
+				log.Println("Failed to broadcast to", id, ":", err)
+			}
+			p.ConnMu.Unlock()
 		}
-		if err := p.Conn.WriteJSON(msg); err != nil {
-			log.Println("Failed to broadcast to", id, ":", err)
-		} else {
-			log.Println("Broadcasted", msg.Type, "to", id)
-		}
-		mu.RUnlock()
+		zone.Mu.RUnlock()
 	}
 }
 
@@ -221,11 +909,9 @@ func mustMarshal(v interface{}) json.RawMessage {
 }
 
 func fetchGotchiStats(gotchiId string) (int, error) {
-	log.Println("Fetching stats for Gotchi ID:", gotchiId)
 	query := `{"query":"query($id: ID!) { aavegotchi(id: $id) { modifiedNumericTraits withSetsRarityScore } }","variables":{"id":"` + gotchiId + `"}}`
 	resp, err := httpClient.Post("https://subgraph.satsuma-prod.com/tWYl5n5y04oz/aavegotchi/aavegotchi-core-matic/api", "application/json", bytes.NewBuffer([]byte(query)))
 	if err != nil {
-		log.Println("HTTP error fetching stats for", gotchiId, ":", err)
 		return 0, err
 	}
 	defer resp.Body.Close()
@@ -238,20 +924,15 @@ func fetchGotchiStats(gotchiId string) (int, error) {
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		log.Println("Decode error fetching stats for", gotchiId, ":", err)
 		return 0, err
 	}
 	if result.Data.Aavegotchi.ModifiedNumericTraits == nil || len(result.Data.Aavegotchi.ModifiedNumericTraits) != 6 {
-		log.Println("Invalid traits for Gotchi ID:", gotchiId)
 		return 0, nil
 	}
 	brs, err := strconv.Atoi(result.Data.Aavegotchi.WithSetsRarityScore)
 	if err != nil {
-		log.Println("Conversion error for BRS:", err)
 		return 0, err
 	}
-
-	log.Println("Fetched stats for Gotchi ID:", gotchiId, "BRS:", brs)
 	return brs, nil
 }
 
@@ -265,20 +946,28 @@ func calculateStats(brs int) (hp, atk, ap int, rgn, speed float32) {
 }
 
 func main() {
-	// Load tilemap on server startup
-	if err := LoadTilemap(); err != nil {
-		log.Fatal("Failed to load tilemap:", err)
-	}
+	initConfig()
+	go initZonesAndWorkers() // Run asynchronously
 
-	go GameLoop(playerUpdateChan)
+	go HandleEnemyRespawns()
+	go HandlePlayerCleanup()
 	go BroadcastLoopPlayerUpdates(playerUpdateChan)
+	Zone int	`json:`
+	Zone int	`json:`
 	go BroadcastLoopEnemyUpdates(enemyUpdateChan)
 	go BroadcastLoopAttackUpdates(attackUpdateChan)
 	go BroadcastLoopDamageUpdates(damageUpdateChan)
-	go HandleEnemyRespawns() // Start enemy respawn logic in a separate goroutine
-	go HandlePlayerCleanup()
 
 	http.HandleFunc("/ws", wsHandler)
 	log.Println("Server starting on :8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	listener, err := net.Listen("tcp", ":8080")
+	if err != nil {
+		log.Fatal("Failed to listen on :8080:", err)
+	}
+	log.Println("Server listening on :8080")
+	err = http.Serve(listener, nil)
+	if err != nil {
+		log.Fatal("Serve failed:", err)
+	}
 }
+*/
