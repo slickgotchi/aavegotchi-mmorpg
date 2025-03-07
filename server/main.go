@@ -14,11 +14,11 @@ import (
 
 // Config constants
 const (
-	NumZones     = 9
-	TickInterval = 100 * time.Millisecond
-	ZoneWidth    = 256 // Tiles
-	ZoneHeight   = 256 // Tiles
-	TileSize     = 32  // Pixels
+	NumZones         = 9
+	TickInterval     = 100 * time.Millisecond
+	ZoneWidthPixels  = 256 * 32 // Tiles
+	ZoneHeightPixels = 256 * 32 // Tiles
+	TileSize         = 32       // Pixels
 )
 
 // Message is a generic struct for client/server communication
@@ -52,6 +52,10 @@ type Enemy struct {
 	X, Y   float32 // Tile coordinates
 	VX, VY float32 // Tiles per second
 	State  string  // "Spawn", "Roam", etc.
+
+	Type      string
+	Direction int
+	HP        int
 }
 
 // GameServer holds the overall state
@@ -61,18 +65,24 @@ type GameServer struct {
 
 // PlayerUpdate represents player data sent to clients
 type PlayerUpdate struct {
-	PlayerID string  `json:"playerId"`
-	X        float32 `json:"x"`
-	Y        float32 `json:"y"`
-	ZoneID   int     `json:"zoneId"`
+	PlayerID  string  `json:"playerId"`
+	X         float32 `json:"x"`
+	Y         float32 `json:"y"`
+	ZoneID    int     `json:"zoneId"`
+	Timestamp int64   `json:"timestamp"`
 }
 
 // EnemyUpdate represents enemy data sent to clients
 type EnemyUpdate struct {
-	EnemyID string  `json:"enemyId"`
-	X       float32 `json:"x"`
-	Y       float32 `json:"y"`
-	ZoneID  int     `json:"zoneId"`
+	EnemyID   string  `json:"enemyId"`
+	X         float32 `json:"x"`
+	Y         float32 `json:"y"`
+	ZoneID    int     `json:"zoneId"`
+	Timestamp int64   `json:"timestamp"`
+
+	Type      string `json:"type"`
+	Direction int    `json:"int"`
+	HP        int    `json:"hp"`
 }
 
 var upgrader = websocket.Upgrader{
@@ -107,12 +117,17 @@ func NewGameServer() *GameServer {
 			gs.Zones[i].Enemies[enemyID] = &Enemy{
 				ID:     enemyID,
 				ZoneID: i,
-				X:      float32(rand.Intn(ZoneWidth)),
-				Y:      float32(rand.Intn(ZoneHeight)),
+				X:      float32(x*ZoneWidthPixels) + float32(rand.Intn(ZoneWidthPixels)),
+				Y:      float32(y*ZoneHeightPixels) + float32(rand.Intn(ZoneHeightPixels)),
 				VX:     float32(rand.Intn(3) - 1), // -1 to 1 tiles/sec
 				VY:     float32(rand.Intn(3) - 1),
 				State:  "Spawn",
+
+				Type:      "easy",
+				Direction: 0,
+				HP:        100,
 			}
+			log.Println("new enemy at x: ", gs.Zones[i].Enemies[enemyID].X, ", y: ", gs.Zones[i].Enemies[enemyID].Y)
 		}
 	}
 
@@ -203,35 +218,45 @@ func (gs *GameServer) processZone(zone *Zone) {
 		case "Roam":
 			enemy.X += enemy.VX * dt
 			enemy.Y += enemy.VY * dt
-			// Simple bounds check
-			if enemy.X < 0 || enemy.X >= ZoneWidth {
-				enemy.VX = -enemy.VX
-				enemy.X = clamp(enemy.X, 0, ZoneWidth-1)
-			}
-			if enemy.Y < 0 || enemy.Y >= ZoneHeight {
-				enemy.VY = -enemy.VY
-				enemy.Y = clamp(enemy.Y, 0, ZoneHeight-1)
-			}
+			// clampToZone(enemy, gs)
+			// // Simple bounds check
+			// if enemy.X < 0 || enemy.X >= ZoneWidthPixels {
+			// 	enemy.VX = -enemy.VX
+			// 	enemy.X = clamp(enemy.X, 0, ZoneWidthPixels-1)
+			// }
+			// if enemy.Y < 0 || enemy.Y >= ZoneHeightPixels {
+			// 	enemy.VY = -enemy.VY
+			// 	enemy.Y = clamp(enemy.Y, 0, ZoneHeightPixels-1)
+			// }
+
 		}
 	}
+
+	timestamp := time.Now().UnixMilli()
 
 	// Prepare updates
 	playerUpdates := make([]PlayerUpdate, 0, len(zone.Players))
 	enemyUpdates := make([]EnemyUpdate, 0, len(zone.Enemies))
 	for _, p := range zone.Players {
 		playerUpdates = append(playerUpdates, PlayerUpdate{
-			PlayerID: p.ID,
-			X:        p.X,
-			Y:        p.Y,
-			ZoneID:   p.ZoneID,
+			PlayerID:  p.ID,
+			X:         p.X,
+			Y:         p.Y,
+			ZoneID:    p.ZoneID,
+			Timestamp: timestamp,
 		})
 	}
 	for _, e := range zone.Enemies {
 		enemyUpdates = append(enemyUpdates, EnemyUpdate{
-			EnemyID: e.ID,
-			X:       e.X,
-			Y:       e.Y,
-			ZoneID:  e.ZoneID,
+			EnemyID:   e.ID,
+			X:         e.X,
+			Y:         e.Y,
+			ZoneID:    e.ZoneID,
+			Timestamp: timestamp,
+
+			Type:      e.Type,
+			Direction: e.Direction,
+			HP:        e.HP,
 		})
 	}
 
@@ -247,6 +272,17 @@ func (gs *GameServer) processZone(zone *Zone) {
 	}
 }
 
+func clampToZone(e *Enemy, gs *GameServer) {
+	zoneId := e.ZoneID
+	minX := gs.Zones[zoneId].X
+	minY := gs.Zones[zoneId].Y
+	maxX := minX + ZoneWidthPixels
+	maxY := minY + ZoneWidthPixels
+
+	e.X = clamp(e.X, float32(minX), float32(maxX))
+	e.Y = clamp(e.Y, float32(minY), float32(maxY))
+}
+
 // clamp restricts a value to a range
 func clamp(val, min, max float32) float32 {
 	if val < min {
@@ -260,8 +296,8 @@ func clamp(val, min, max float32) float32 {
 
 // calculateZoneID determines the zone based on tile coordinates
 func (gs *GameServer) calculateZoneID(x, y float32) int {
-	zoneX := int(x) / ZoneWidth
-	zoneY := int(y) / ZoneHeight
+	zoneX := int(x) / ZoneWidthPixels
+	zoneY := int(y) / ZoneHeightPixels
 	if zoneX < 0 || zoneX >= 3 || zoneY < 0 || zoneY >= 3 {
 		return 0 // Clamp to bottom-left for now
 	}
@@ -304,9 +340,9 @@ func (gs *GameServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	playerID := fmt.Sprintf("player%d", time.Now().UnixNano())
 	player := &Player{
 		ID:     playerID,
-		ZoneID: 0,                           // Bottom-left zone
-		X:      1.5 * ZoneWidth * TileSize,  // Center of zone 0
-		Y:      1.5 * ZoneHeight * TileSize, // Center of zone 0
+		ZoneID: 0,                      // Bottom-left zone
+		X:      1.5 * ZoneWidthPixels,  // Center of zone 0
+		Y:      1.5 * ZoneHeightPixels, // Center of zone 0
 		Conn:   conn,
 	}
 	initialZone := gs.Zones[0]

@@ -13,75 +13,19 @@ export function DebugInfo({ gameRef, ws, gameDimensions }: DebugInfoProps) {
     const [ping, setPing] = useState(0);
     const [lastPingTime, setLastPingTime] = useState(0);
 
-    // Calculate local FPS (Phaser game FPS)
+    // Get local FPS from Phaser
     useEffect(() => {
         if (!gameRef.current) return;
 
-        let frameCount = 0;
-        let lastTime = performance.now();
-
-        const updateFPS = () => {
-            frameCount++;
-            const currentTime = performance.now();
-            if (currentTime - lastTime >= 1000) { // Update every second
-                setLocalFPS(frameCount);
-                frameCount = 0;
-                lastTime = currentTime;
+        const interval = setInterval(() => {
+            const game = gameRef.current;
+            if (game) {
+                setLocalFPS(Math.round(game.loop.actualFps)); // Get FPS directly from Phaser
             }
-            requestAnimationFrame(updateFPS);
-        };
+        }, 500); // Update every 500ms
 
-        requestAnimationFrame(updateFPS);
-
-        return () => {
-            // Cleanup animation frame
-        };
-    }, [gameRef]);
-
-    /*
-    // Calculate server FPS and ping via WebSocket
-    useEffect(() => {
-        if (!ws) return;
-
-        let pingStart = 0;
-        let pingCount = 0;
-        let pingSum = 0;
-
-        const pingServer = () => {
-            if (ws.readyState === WebSocket.OPEN) {
-                pingStart = Date.now();
-                ws.send(JSON.stringify({ type: 'ping' }));
-                pingCount++;
-                setLastPingTime(Date.now());
-            }
-        };
-
-        ws.onmessage = (e) => {
-            let msg;
-            try {
-                msg = JSON.parse(e.data);
-            } catch (err) {
-                console.error('Failed to parse message:', err);
-                return;
-            }
-
-            if (msg.type === 'pong') {
-                const latency = Date.now() - pingStart;
-                pingSum += latency;
-                setPing(Math.round(pingSum / pingCount) || 0); // Average ping
-
-                // Assume server FPS is sent in pong (if implemented on server)
-                if (msg.data && msg.data.serverFPS) {
-                    setServerFPS(msg.data.serverFPS);
-                }
-            }
-        };
-
-        // Send ping every second
-        const pingInterval = setInterval(pingServer, 1000);
-        return () => clearInterval(pingInterval);
-    }, [ws]);
-    */
+        return () => clearInterval(interval);
+    }, [gameRef.current]);
 
     const scale = Math.min(gameDimensions.width / 1920, gameDimensions.height / 1200);
     const margin = 10 * scale;
@@ -90,8 +34,8 @@ export function DebugInfo({ gameRef, ws, gameDimensions }: DebugInfoProps) {
         <div
             style={{
                 position: 'absolute',
-                left: `${margin + gameDimensions.left}px`,
-                top: `${margin + 128*scale}px`,
+                left: `${gameDimensions.left + margin}px`,
+                top: `${gameDimensions.top + margin + 64*scale}px`,
                 zIndex: 5000, // Above everything
                 fontFamily: 'Pixelar',
                 color: '#ffffff',

@@ -36,8 +36,9 @@ export interface TilemapProperty {
 }
 
 export interface Enemy {
-    container: Phaser.GameObjects.Container;
-    hpBar: Phaser.GameObjects.Rectangle;
+    bodySprite: Phaser.GameObjects.Sprite;
+    shadowSprite?: Phaser.GameObjects.Ellipse;
+    hpBar?: Phaser.GameObjects.Rectangle;
     maxHp: number;
     type: string;
     positionBuffer: PositionUpdate[];
@@ -55,7 +56,7 @@ export class GameScene extends Phaser.Scene {
     private enemies: { [id: string]: Enemy } = {};
     private ws!: WebSocket;
     private keys!: { W: Phaser.Input.Keyboard.Key; A: Phaser.Input.Keyboard.Key; S: Phaser.Input.Keyboard.Key; D: Phaser.Input.Keyboard.Key; SPACE: Phaser.Input.Keyboard.Key };
-    private moveTimer = 0;
+    private tickTimer = 0;
     private circlePool: Phaser.GameObjects.Graphics[] = [];
     private textPool: Phaser.GameObjects.Text[] = [];
     private isConnected = false;
@@ -63,6 +64,7 @@ export class GameScene extends Phaser.Scene {
     private localPlayerID!: string;
     private followedPlayerID!: string;
 
+    private testEnemySprites: Phaser.GameObjects.Sprite[] = [];
 
     public getPlayers() { return this.players; }
     public getLocalPlayerID() { return this.localPlayerID; }
@@ -122,10 +124,20 @@ export class GameScene extends Phaser.Scene {
             this.ws.onmessage = (event) => {
                 const messages = JSON.parse(event.data);
                 messages.forEach((msg:any) => {
-                    if (msg.type === 'playerUpdates') {
-                        msg.data.forEach((update:any) => {
-                            this.addOrUpdatePlayer(update);
-                        });
+                    switch (msg.type){
+                        case 'playerUpdates':
+                            msg.data.forEach((update:any) => {
+                                this.addOrUpdatePlayer(update);
+                            });
+                        break;
+
+                        case 'enemyUpdates':
+                            msg.data.forEach((update:any) => {
+                                this.addOrUpdateEnemy(update);
+                            })
+                        break;
+
+                        default: break;
                     }
                     // Uncomment for enemies (disabled due to sprite limit)
                     /*
@@ -159,6 +171,24 @@ export class GameScene extends Phaser.Scene {
 
         this.resizeGame();
         window.addEventListener('resize', () => this.resizeGame());
+
+
+        // create some test enemies
+        // var layer = this.add.spriteGPULayer('enemy-easy', 1000);
+        for (let i = 0; i < 20000; i++){
+            // var template = {
+            //     x: Math.random() * zoneSize * tileSize,
+            //     y: Math.random() * zoneSize * tileSize,
+            // }
+            // var sprite = this.add.sprite(
+            //     Math.random() * zoneSize * tileSize * 12,
+            //     Math.random() * zoneSize * tileSize * 12,
+            //     'enemy-easy'
+            // )
+            // .setScale(10);
+
+            // this.testEnemySprites.push(sprite);
+        }
     }
 
     /*
@@ -384,30 +414,42 @@ export class GameScene extends Phaser.Scene {
     }
 */
     addOrUpdateEnemy(data: any) {
-        if (!data.id || !data.timestamp) return;
+        const {enemyId, x, y, zoneId, timestamp, type, hp } = data;
 
-        if (!this.enemies[data.id] && data.hp > 0) {
-            const texture = `enemy-${data.type}`;
-            const sprite = this.add.sprite(0, 0, texture).setDepth(1000).setScale(1);
-            const shadow = this.add.ellipse(0, sprite.height / 2, 24, 16, 0x000000, 0.5).setDepth(999).setAlpha(0.5);
-            const hpBar = this.add.rectangle(0, -30, 32, 5, 0xff0000).setOrigin(0.5, 0);
-            const container = this.add.container(data.x, data.y, [shadow, sprite, hpBar]).setDepth(1000);
+        // NEW ENEMY
+        if (!this.enemies[enemyId] && hp > 0) {
+            console.log("add new enemy", data);
+            const texture = `enemy-${type}`;
+            console.log(texture);
+            const bodySprite = this.add.sprite(x, y, texture)
+            .setDepth(3000)
+            .setScale(1)
+            .setScale(10);
+            // const shadow = this.add.ellipse(0, bodySprite.height / 2, 24, 16, 0x000000, 0.5).setDepth(999).setAlpha(0.5);
+            // const hpBar = this.add.rectangle(0, -30, 32, 5, 0xff0000).setOrigin(0.5, 0);
+            // const container = this.add.container(x, y, [shadow, sprite, hpBar]).setDepth(1000);
 
-            this.enemies[data.id] = {
-                container,
-                hpBar,
-                maxHp: data.maxHp,
-                type: data.type,
+            this.enemies[enemyId] = {
+                bodySprite: bodySprite,
+                shadowSprite: undefined,
+                hpBar: undefined,
+                maxHp: hp,
+                type: type,
                 positionBuffer: [],
-                hp: data.hp,
+                hp: hp,
                 direction: data.direction
             };
-            console.log(`Added enemy ${data.id}`);
-        } else if (data.hp > 0) {
-            const enemy = this.enemies[data.id];
+            console.log(`Added enemy ${enemyId}`);
+        } 
+
+        return;
+        
+        // GENERAL UPDATE
+        if (this.enemies[enemyId] && hp > 0) {
+            const enemy = this.enemies[enemyId];
             enemy.positionBuffer.push({
-                x: data.x,
-                y: data.y,
+                x: x,
+                y: y,
                 timestamp: data.timestamp
             });
 
@@ -415,14 +457,17 @@ export class GameScene extends Phaser.Scene {
                 enemy.positionBuffer.shift();
             }
 
-            enemy.hp = data.hp;
+            enemy.hp = hp;
             if (data.direction !== undefined) {
                 enemy.direction = data.direction;
                 // Add directional sprite logic here if enemy textures support it
             }
-            this.updateEnemyHP(data.id);
-        } else if (data.hp <= 0) {
-            this.removeEnemy(data.id);
+            // this.updateEnemyHP(enemyId);
+        }  
+        
+        // DEAD
+        if (hp <= 0) {
+            this.removeEnemy(enemyId);
         }
     }
 
@@ -431,8 +476,8 @@ export class GameScene extends Phaser.Scene {
         let x: number, y: number, textColor: string, offsetY: number;
 
         if (type === "enemy" && this.enemies[id]) {
-            x = this.enemies[id].container.x;
-            y = this.enemies[id].container.y;
+            x = this.enemies[id].bodySprite.x;
+            y = this.enemies[id].bodySprite.y;
             textColor = '#ffffff';
             offsetY = -32;
         } else if (type === "player" && this.players[id]) {
@@ -534,10 +579,12 @@ export class GameScene extends Phaser.Scene {
 
     removeEnemy(id: string) {
         if (this.enemies[id]) {
-            const x = this.enemies[id].container.x;
-            const y = this.enemies[id].container.y;
+            const x = this.enemies[id].bodySprite.x;
+            const y = this.enemies[id].bodySprite.y;
             this.createRectExplosion(x, y);
-            this.enemies[id].container.destroy();
+            this.enemies[id].bodySprite.destroy();
+            this.enemies[id].shadowSprite?.destroy();
+            this.enemies[id].hpBar?.destroy();
             delete this.enemies[id];
         }
     }
@@ -548,7 +595,7 @@ export class GameScene extends Phaser.Scene {
             if (enemy.hp <= 0) {
                 this.removeEnemy(id);
             } else {
-                enemy.hpBar.width = 32 * (enemy.hp / enemy.maxHp);
+                // enemy.hpBar?.width = 32 * (enemy.hp / enemy.maxHp);
             }
         }
     }
@@ -671,26 +718,38 @@ export class GameScene extends Phaser.Scene {
     }
 
     update(time: number, delta: number) {
-        this.moveTimer -= delta / 1000;
+        this.tickTimer -= delta / 1000;
         // console.log(this.moveTimer, this.ws, this.localPlayerID);
-        if (this.moveTimer <= 0 && this.isConnected && this.localPlayerID) {
-            this.keyState = {
-                W: this.keys.W.isDown,
-                A: this.keys.A.isDown,
-                S: this.keys.S.isDown,
-                D: this.keys.D.isDown,
-                SPACE: this.keys.SPACE.isDown,
-            };
-            const message = JSON.stringify({ type: 'input', data: { 
-                playerId: this.localPlayerID, keys: this.keyState } });
-            try {
-                this.ws.send(message);
-                // console.log('Sent input for local player:', this.localPlayerID, this.keyState); // Add this log
-            } catch (e) {
-                console.error('Failed to send input:', e);
+        while (this.tickTimer <= 0 && this.isConnected && this.localPlayerID) {
+            this.tickTimer += 0.1; // 100ms input rate
+
+            if (this.isConnected && this.localPlayerID) {
+                this.keyState = {
+                    W: this.keys.W.isDown,
+                    A: this.keys.A.isDown,
+                    S: this.keys.S.isDown,
+                    D: this.keys.D.isDown,
+                    SPACE: this.keys.SPACE.isDown,
+                };
+                const message = JSON.stringify({ type: 'input', data: { 
+                    playerId: this.localPlayerID, keys: this.keyState } });
+                try {
+                    this.ws.send(message);
+                    // console.log('Sent input for local player:', this.localPlayerID, this.keyState); // Add this log
+                } catch (e) {
+                    console.error('Failed to send input:', e);
+                }
             }
-            this.moveTimer = 0.1; // 100ms input rate
+
+            // take this opportunity to move all our sprites
+            var enemyLength = this.testEnemySprites.length;
+            for (let i = 0; i < enemyLength; i++){
+                this.testEnemySprites[i].x += (Math.random()-0.5) * 10; 
+                this.testEnemySprites[i].y += (Math.random()-0.5) * 10;
+            }
         }
+
+        this.registry.set('localfps', 1/delta);
 
         this.interpolatePlayers();
         this.interpolateEnemies();
@@ -736,11 +795,15 @@ export class GameScene extends Phaser.Scene {
             const enemy = this.enemies[id];
             if (enemy.positionBuffer.length === 0) continue;
 
+            var latest = enemy.positionBuffer[enemy.positionBuffer.length-1];
+            enemy.bodySprite.setPosition(latest.x, latest.y);
+            continue;
+
             const targetTime = Date.now() - INTERPOLATION_DELAY_MS;
             const buffer = enemy.positionBuffer;
 
             if (buffer.length < 2) {
-                enemy.container.setPosition(buffer[0].x, buffer[0].y);
+                enemy.bodySprite.setPosition(buffer[0].x, buffer[0].y);
                 continue;
             }
 
@@ -757,10 +820,10 @@ export class GameScene extends Phaser.Scene {
                 const alpha = (targetTime - older.timestamp) / (newer.timestamp - older.timestamp);
                 const interpX = older.x + (newer.x - older.x) * Math.min(1, Math.max(0, alpha));
                 const interpY = older.y + (newer.y - older.y) * Math.min(1, Math.max(0, alpha));
-                enemy.container.setPosition(interpX, interpY);
+                enemy.bodySprite.setPosition(interpX, interpY);
             } else if (buffer.length > 0) {
                 const last = buffer[buffer.length - 1];
-                enemy.container.setPosition(last.x, last.y);
+                enemy.bodySprite.setPosition(last.x, last.y);
             }
         }
     }
