@@ -3,22 +3,24 @@ package main
 import (
 	"fmt"
 	"log"
+	"math"
 	"math/rand"
 	"net/http"
-	"time"
-
 	"runtime"
+	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
 
 // Config constants
 const (
-	NumZones         = 9
-	TickInterval     = 100 * time.Millisecond
-	ZoneWidthPixels  = 256 * 32 // Tiles
-	ZoneHeightPixels = 256 * 32 // Tiles
-	TileSize         = 32       // Pixels
+	NumZones          = 9
+	TickInterval      = 100 * time.Millisecond
+	ZoneWidthPixels   = 256 * 32 // Tiles
+	ZoneHeightPixels  = 256 * 32 // Tiles
+	TileSize          = 32       // Pixels
+	NumEnemiesPerZone = 2000
 )
 
 // Message is a generic struct for client/server communication
@@ -29,11 +31,13 @@ type Message struct {
 
 // Zone represents an independent game zone
 type Zone struct {
-	ID      int
-	X, Y    int // Grid position (e.g., 0,0 for bottom-left)
-	Players map[string]*Player
-	Enemies map[string]*Enemy
-	Inbound chan Message
+	ID         int
+	TilemapRef string
+	X, Y       int // Grid position (e.g., 0,0 for bottom-left)
+	Players    map[string]*Player
+	Enemies    map[string]*Enemy
+	Inbound    chan Message
+	mu         sync.Mutex
 }
 
 // Player represents a player entity
@@ -85,6 +89,14 @@ type EnemyUpdate struct {
 	HP        int    `json:"hp"`
 }
 
+// ActiveZoneList represents the list of 4 active zones
+type ActiveZoneList struct {
+	CurrentZoneID  int `json:"currentZoneId"`
+	XAxisZoneID    int `json:"xAxisZoneId"`
+	YAxisZoneID    int `json:"yAxisZoneId"`
+	DiagonalZoneID int `json:"diagonalZoneId"`
+}
+
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
@@ -93,41 +105,60 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-// NewGameServer initializes the server
 func NewGameServer() *GameServer {
+	// Ensure world configuration is initialized
+	InitializeWorld()
+
 	gs := &GameServer{
-		Zones: make([]*Zone, NumZones),
+		Zones: make([]*Zone, len(World.Zones)),
 	}
 
-	// Initialize 3x3 grid of zones
-	for i := 0; i < NumZones; i++ {
-		x := i % 3 // Column
-		y := i / 3 // Row
-		gs.Zones[i] = &Zone{
-			ID:      i,
-			X:       x,
-			Y:       y,
-			Players: make(map[string]*Player),
-			Enemies: make(map[string]*Enemy),
-			Inbound: make(chan Message, 100),
+	// Initialize zones from config
+	for i, config := range World.Zones {
+		// Get the grid position from the calculated zonePositions
+		pos, exists := zonePositions[config.ID]
+		if !exists {
+			log.Fatalf("Grid position for zone ID %d not found", config.ID)
 		}
-		// Spawn 500 enemies
-		for j := 0; j < 500; j++ {
-			enemyID := fmt.Sprintf("enemy%d_%d", i, j)
-			gs.Zones[i].Enemies[enemyID] = &Enemy{
-				ID:     enemyID,
-				ZoneID: i,
-				X:      float32(x*ZoneWidthPixels) + float32(rand.Intn(ZoneWidthPixels)),
-				Y:      float32(y*ZoneHeightPixels) + float32(rand.Intn(ZoneHeightPixels)),
-				VX:     float32(rand.Intn(3) - 1), // -1 to 1 tiles/sec
-				VY:     float32(rand.Intn(3) - 1),
-				State:  "Spawn",
 
-				Type:      "easy",
+		gs.Zones[i] = &Zone{
+			ID:         config.ID,
+			TilemapRef: config.TilemapRef,
+			X:          pos.GridX, // Use calculated GridX
+			Y:          pos.GridY, // Use calculated GridY
+			Players:    make(map[string]*Player),
+			Enemies:    make(map[string]*Enemy),
+			Inbound:    make(chan Message, 100),
+			mu:         sync.Mutex{},
+		}
+		// Spawn enemies within the zone's bounds
+		for j := 0; j < NumEnemiesPerZone; j++ {
+			enemyType := "easy"
+			randType := rand.Intn(3)
+			if randType == 0 {
+				enemyType = "easy"
+			} else if randType == 1 {
+				enemyType = "medium"
+			} else {
+				enemyType = "hard"
+			}
+			enemyID := fmt.Sprintf("enemy%d_%d", config.ID, j)
+			// Calculate enemy position based on the zone's grid position
+			zoneOffsetX := float32(pos.GridX * ZoneWidthPixels)
+			zoneOffsetY := float32(pos.GridY * ZoneHeightPixels)
+			gs.Zones[i].Enemies[enemyID] = &Enemy{
+				ID:        enemyID,
+				ZoneID:    config.ID,
+				X:         zoneOffsetX + float32(rand.Intn(ZoneWidthPixels)), // Within zone bounds
+				Y:         zoneOffsetY + float32(rand.Intn(ZoneHeightPixels)),
+				VX:        float32(rand.Float32()*0.5-1) * 100,
+				VY:        float32(rand.Float32()*0.5-1) * 100,
+				State:     "Spawn",
+				Type:      enemyType,
 				Direction: 0,
 				HP:        100,
 			}
-			log.Println("new enemy at x: ", gs.Zones[i].Enemies[enemyID].X, ", y: ", gs.Zones[i].Enemies[enemyID].Y)
+			// log.Printf("New enemy %s in zone %d at x: %.2f, y: %.2f", enemyID, config.ID, gs.Zones[i].Enemies[enemyID].X, gs.Zones[i].Enemies[enemyID].Y)
 		}
 	}
 
@@ -151,14 +182,117 @@ func (gs *GameServer) worker(zone *Zone) {
 	}
 }
 
-// processZone updates a single zone synchronously
+// getActiveZones calculates the 4 active zones for a player based on position and neighbors
+func (gs *GameServer) getActiveZones(player *Player) ActiveZoneList {
+	currentZoneID := player.ZoneID
+	var currentZone *Zone
+	for _, zone := range gs.Zones {
+		if zone.ID == currentZoneID {
+			currentZone = zone
+			break
+		}
+	}
+	if currentZone == nil {
+		log.Printf("Warning: Current zone %d not found for player %s", currentZoneID, player.ID)
+		return ActiveZoneList{CurrentZoneID: currentZoneID, XAxisZoneID: 0, YAxisZoneID: 0, DiagonalZoneID: 0}
+	}
+
+	// Find the config for the current zone
+	var currentConfig ZoneConfig
+	for _, config := range World.Zones {
+		if config.ID == currentZoneID {
+			currentConfig = config
+			break
+		}
+	}
+
+	// Convert player coordinates to zone-local coordinates (0 to 8191)
+	localX := int(player.X) % ZoneWidthPixels
+	localY := int(player.Y) % ZoneHeightPixels
+
+	// Determine nearest x-axis and y-axis neighbors
+	var xAxisZoneID, yAxisZoneID int
+	// Check east/west based on x position within zone
+	if localX > ZoneWidthPixels/2 {
+		xAxisZoneID = currentConfig.Neighbors[2] // East
+	} else {
+		xAxisZoneID = currentConfig.Neighbors[6] // West
+	}
+	if localY > ZoneHeightPixels/2 {
+		yAxisZoneID = currentConfig.Neighbors[4] // South
+	} else {
+		yAxisZoneID = currentConfig.Neighbors[0] // North
+	}
+
+	// Determine nearest diagonal neighbor
+	adjacentDiagonals := []struct {
+		zoneID    int
+		centerX   float32
+		centerY   float32
+		direction int // Index into Neighbors array
+	}{
+		{currentConfig.Neighbors[7], 0, 0, 7}, // Northwest
+		{currentConfig.Neighbors[1], 0, 0, 1}, // Northeast
+		{currentConfig.Neighbors[3], 0, 0, 3}, // Southeast
+		{currentConfig.Neighbors[5], 0, 0, 5}, // Southwest
+	}
+
+	// Update center positions based on actual zone positions from zonePositions
+	for i := range adjacentDiagonals {
+		if adjacentDiagonals[i].zoneID == 0 {
+			continue
+		}
+		pos, exists := zonePositions[adjacentDiagonals[i].zoneID]
+		if !exists {
+			log.Printf("Warning: Grid position for neighbor zone %d not found", adjacentDiagonals[i].zoneID)
+			adjacentDiagonals[i].zoneID = 0 // Skip this neighbor
+			continue
+		}
+		adjacentDiagonals[i].centerX = float32(pos.GridX*ZoneWidthPixels + ZoneWidthPixels/2)
+		adjacentDiagonals[i].centerY = float32(pos.GridY*ZoneHeightPixels + ZoneHeightPixels/2)
+	}
+
+	minDistance := float32(math.Inf(1))
+	var diagonalZoneID int
+	playerCenterX := player.X
+	playerCenterY := player.Y
+	for _, z := range adjacentDiagonals {
+		if z.zoneID == 0 {
+			continue
+		}
+		dx := playerCenterX - z.centerX
+		dy := playerCenterY - z.centerY
+		distance := float32(math.Sqrt(float64(dx*dx + dy*dy)))
+		if distance < minDistance {
+			minDistance = distance
+			diagonalZoneID = z.zoneID
+		}
+	}
+
+	// Fallback to a valid neighbor if no diagonal found
+	if diagonalZoneID == 0 && minDistance == float32(math.Inf(1)) {
+		for _, neighbor := range currentConfig.Neighbors {
+			if neighbor != 0 {
+				diagonalZoneID = neighbor
+				break
+			}
+		}
+	}
+
+	return ActiveZoneList{
+		CurrentZoneID:  currentZoneID,
+		XAxisZoneID:    xAxisZoneID,
+		YAxisZoneID:    yAxisZoneID,
+		DiagonalZoneID: diagonalZoneID,
+	}
+}
+
 func (gs *GameServer) processZone(zone *Zone) {
 	// Process inbound messages
 	for len(zone.Inbound) > 0 {
 		msg := <-zone.Inbound
 		switch msg.Type {
 		case "input":
-			// Deserialize data into a map
 			if data, ok := msg.Data.(map[string]interface{}); ok {
 				playerID, pidOk := data["playerId"].(string)
 				if !pidOk {
@@ -169,7 +303,6 @@ func (gs *GameServer) processZone(zone *Zone) {
 					continue
 				}
 
-				// Extract keys object
 				if keys, ok := data["keys"].(map[string]interface{}); ok {
 					player.VX = 0
 					player.VY = 0
@@ -186,9 +319,7 @@ func (gs *GameServer) processZone(zone *Zone) {
 					if d, ok := keys["D"].(bool); ok && d {
 						player.VX = speed
 					}
-					// SPACE key can be processed here if needed
 					if space, ok := keys["SPACE"].(bool); ok && space {
-						// Placeholder for future action (e.g., jump, attack)
 						log.Printf("Player %s pressed SPACE in Zone %d", playerID, zone.ID)
 					}
 				}
@@ -199,109 +330,155 @@ func (gs *GameServer) processZone(zone *Zone) {
 	}
 
 	// Update players
-	dt := float32(TickInterval.Seconds()) // ~0.1s
+	zone.mu.Lock()
+	dt := float32(TickInterval.Seconds())
 	for _, player := range zone.Players {
 		player.X += player.VX * dt
 		player.Y += player.VY * dt
-		newZoneID := gs.calculateZoneID(player.X, player.Y)
+		newZoneID := gs.calculateZoneID(player.X, player.Y, player)
 		if newZoneID != player.ZoneID {
 			gs.switchZone(player, zone, newZoneID)
 			continue
 		}
 	}
-
-	// Update enemies
-	for _, enemy := range zone.Enemies {
-		switch enemy.State {
-		case "Spawn":
-			enemy.State = "Roam" // Transition after one tick
-		case "Roam":
-			enemy.X += enemy.VX * dt
-			enemy.Y += enemy.VY * dt
-			// clampToZone(enemy, gs)
-			// // Simple bounds check
-			// if enemy.X < 0 || enemy.X >= ZoneWidthPixels {
-			// 	enemy.VX = -enemy.VX
-			// 	enemy.X = clamp(enemy.X, 0, ZoneWidthPixels-1)
-			// }
-			// if enemy.Y < 0 || enemy.Y >= ZoneHeightPixels {
-			// 	enemy.VY = -enemy.VY
-			// 	enemy.Y = clamp(enemy.Y, 0, ZoneHeightPixels-1)
-			// }
-
-		}
-	}
+	zone.mu.Unlock()
 
 	timestamp := time.Now().UnixMilli()
 
-	// Prepare updates
-	playerUpdates := make([]PlayerUpdate, 0, len(zone.Players))
-	enemyUpdates := make([]EnemyUpdate, 0, len(zone.Enemies))
-	for _, p := range zone.Players {
-		playerUpdates = append(playerUpdates, PlayerUpdate{
-			PlayerID:  p.ID,
-			X:         p.X,
-			Y:         p.Y,
-			ZoneID:    p.ZoneID,
-			Timestamp: timestamp,
-		})
-	}
-	for _, e := range zone.Enemies {
-		enemyUpdates = append(enemyUpdates, EnemyUpdate{
-			EnemyID:   e.ID,
-			X:         e.X,
-			Y:         e.Y,
-			ZoneID:    e.ZoneID,
-			Timestamp: timestamp,
-
-			Type:      e.Type,
-			Direction: e.Direction,
-			HP:        e.HP,
-		})
-	}
-
-	// Send updates synchronously at tick interval
+	// Prepare and send updates for each player in this zone
+	zone.mu.Lock()
 	for _, player := range zone.Players {
+		activeZones := gs.getActiveZones(player)
+		log.Printf("Active zones for player %s: %+v", player.ID, activeZones)
+
+		var allPlayerUpdates []PlayerUpdate
+		var allEnemyUpdates []EnemyUpdate
+
+		// Collect updates from all 4 active zones
+		activeZoneIDs := []int{activeZones.CurrentZoneID, activeZones.XAxisZoneID, activeZones.YAxisZoneID, activeZones.DiagonalZoneID}
+		for _, zoneID := range activeZoneIDs {
+			if zoneID == 0 {
+				continue // Skip null zone
+			}
+			// Find the zone index based on ID
+			var targetZone *Zone
+			for _, z := range gs.Zones {
+				if z.ID == zoneID {
+					targetZone = z
+					break
+				}
+			}
+			if targetZone == nil {
+				log.Printf("Warning: Zone ID %d not found for player %s", zoneID, player.ID)
+				continue
+			}
+
+			targetZone.mu.Lock()
+			for _, p := range targetZone.Players {
+				allPlayerUpdates = append(allPlayerUpdates, PlayerUpdate{
+					PlayerID:  p.ID,
+					X:         p.X,
+					Y:         p.Y,
+					ZoneID:    p.ZoneID,
+					Timestamp: timestamp,
+				})
+			}
+			for _, e := range targetZone.Enemies {
+				allEnemyUpdates = append(allEnemyUpdates, EnemyUpdate{
+					EnemyID:   e.ID,
+					X:         e.X,
+					Y:         e.Y,
+					ZoneID:    e.ZoneID,
+					Timestamp: timestamp,
+					Type:      e.Type,
+					Direction: e.Direction,
+					HP:        e.HP,
+				})
+			}
+			targetZone.mu.Unlock()
+		}
+
+		// Send batched messages as a single array
 		batch := []Message{
-			{Type: "playerUpdates", Data: playerUpdates},
-			{Type: "enemyUpdates", Data: enemyUpdates},
+			{Type: "activeZones", Data: activeZones},
+			{Type: "playerUpdates", Data: allPlayerUpdates},
+			{Type: "enemyUpdates", Data: allEnemyUpdates},
 		}
 		if err := player.Conn.WriteJSON(batch); err != nil {
-			log.Printf("Error sending to %s: %v", player.ID, err)
+			log.Printf("Error sending batch to %s: %v", player.ID, err)
 		}
 	}
+	zone.mu.Unlock()
 }
 
-func clampToZone(e *Enemy, gs *GameServer) {
-	zoneId := e.ZoneID
-	minX := gs.Zones[zoneId].X
-	minY := gs.Zones[zoneId].Y
-	maxX := minX + ZoneWidthPixels
-	maxY := minY + ZoneWidthPixels
+// func clampToZone(e *Enemy, gs *GameServer) {
+// 	zoneId := e.ZoneID
+// 	minX := gs.Zones[zoneId].X
+// 	minY := gs.Zones[zoneId].Y
+// 	maxX := minX + ZoneWidthPixels
+// 	maxY := minY + ZoneWidthPixels
 
-	e.X = clamp(e.X, float32(minX), float32(maxX))
-	e.Y = clamp(e.Y, float32(minY), float32(maxY))
+// 	e.X = clamp(e.X, float32(minX), float32(maxX))
+// 	e.Y = clamp(e.Y, float32(minY), float32(maxY))
+// }
+
+// // clamp restricts a value to a range
+// func clamp(val, min, max float32) float32 {
+// 	if val < min {
+// 		return min
+// 	}
+// 	if val > max {
+// 		return max
+// 	}
+// 	return val
+// }
+
+func (gs *GameServer) calculateZoneID(x, y float32, player *Player) int {
+	// Convert to grid coordinates
+	gridX := int(x) / (World.ZoneSize * World.TileSize)
+	gridY := int(y) / (World.ZoneSize * World.TileSize)
+
+	// Check if coordinates are within the grid bounds
+	if gridY < 0 || gridY >= len(World.ZoneGrid) || gridX < 0 || gridX >= len(World.ZoneGrid[gridY]) {
+		return 0 // Out of bounds, return null zone
+	}
+
+	zoneID := World.ZoneGrid[gridY][gridX]
+	if zoneID == 0 {
+		// If the current grid position is empty, check neighbors of the player's current zone
+		if player != nil {
+			currentPlayerZone := gs.findPlayerZone(player.ID)
+			if currentPlayerZone != nil {
+				currentConfig := World.Zones[currentPlayerZone.ID-1] // Adjust index since IDs start at 1
+				for _, neighborID := range currentConfig.Neighbors {
+					if neighborID != 0 {
+						pos, exists := zonePositions[neighborID]
+						if !exists {
+							continue
+						}
+						minX := float32(pos.GridX * ZoneWidthPixels)
+						maxX := minX + float32(ZoneWidthPixels)
+						minY := float32(pos.GridY * ZoneHeightPixels)
+						maxY := minY + float32(ZoneHeightPixels)
+						if x >= minX && x < maxX && y >= minY && y < maxY {
+							return neighborID
+						}
+					}
+				}
+			}
+		}
+		return 0 // Default to null zone if no valid neighbor found
+	}
+	return zoneID
 }
 
-// clamp restricts a value to a range
-func clamp(val, min, max float32) float32 {
-	if val < min {
-		return min
+func (gs *GameServer) getZoneByID(zoneId int) *Zone {
+	for _, zone := range gs.Zones {
+		if zone.ID == zoneId {
+			return zone
+		}
 	}
-	if val > max {
-		return max
-	}
-	return val
-}
-
-// calculateZoneID determines the zone based on tile coordinates
-func (gs *GameServer) calculateZoneID(x, y float32) int {
-	zoneX := int(x) / ZoneWidthPixels
-	zoneY := int(y) / ZoneHeightPixels
-	if zoneX < 0 || zoneX >= 3 || zoneY < 0 || zoneY >= 3 {
-		return 0 // Clamp to bottom-left for now
-	}
-	return zoneX + zoneY*3 // 3x3 grid
+	return nil
 }
 
 // switchZone transfers a player
@@ -338,14 +515,18 @@ func (gs *GameServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 
 	playerID := fmt.Sprintf("player%d", time.Now().UnixNano())
+	startX := 1.5 * ZoneWidthPixels
+	startY := 1.5 * ZoneWidthPixels
 	player := &Player{
 		ID:     playerID,
-		ZoneID: 0,                      // Bottom-left zone
-		X:      1.5 * ZoneWidthPixels,  // Center of zone 0
-		Y:      1.5 * ZoneHeightPixels, // Center of zone 0
+		ZoneID: 0,               // Bottom-left zone
+		X:      float32(startX), // Center of zone 0
+		Y:      float32(startY), // Center of zone 0
 		Conn:   conn,
 	}
-	initialZone := gs.Zones[0]
+	player.ZoneID = gs.calculateZoneID(float32(startX), float32(startY), player)
+	log.Println("zone ID: ", player.ZoneID)
+	initialZone := gs.getZoneByID(player.ZoneID)
 	initialZone.Players[playerID] = player
 	log.Printf("Player %s spawned in Zone %d (%d,%d)", playerID, initialZone.ID, initialZone.X, initialZone.Y)
 

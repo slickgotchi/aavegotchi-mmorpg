@@ -5,6 +5,7 @@ const GAME_WIDTH = 1920;
 const GAME_HEIGHT = 1200;
 const MAX_POSITION_BUFFER_LENGTH = 10;
 const INTERPOLATION_DELAY_MS = 100; // Reduced for faster response; adjust as needed
+const MAX_CONCURRENT_ENEMIES = 10000;
 
 export interface PositionUpdate {
     x: number;
@@ -36,14 +37,31 @@ export interface TilemapProperty {
 }
 
 export interface Enemy {
-    bodySprite: Phaser.GameObjects.Sprite;
-    shadowSprite?: Phaser.GameObjects.Ellipse;
+    bodySprite: Phaser.GameObjects.Sprite | null;
+    shadowSprite?: Phaser.GameObjects.Sprite | null;
     hpBar?: Phaser.GameObjects.Rectangle;
     maxHp: number;
     type: string;
     positionBuffer: PositionUpdate[];
     hp: number;
     direction?: number;
+    zoneId: number;
+    hasPoolSprites: boolean;
+}
+
+export interface PoolManager {
+    enemy: {
+        body: Phaser.GameObjects.Group,
+        shadow: Phaser.GameObjects.Group,
+        statBar: Phaser.GameObjects.Group,
+    }
+}
+
+export interface ActiveZoneList {
+    currentZoneId: number;
+    xAxisZoneId: number;
+    yAxisZoneId: number;
+    diagonalZoneId: number;
 }
 
 let player, zones, ws;
@@ -53,7 +71,7 @@ const zoneSize = 256; // 8192px
 
 export class GameScene extends Phaser.Scene {
     private players: { [id: string]: Player } = {};
-    private enemies: { [id: string]: Enemy } = {};
+    // private enemies: { [id: string]: Enemy } = {};
     private ws!: WebSocket;
     private keys!: { W: Phaser.Input.Keyboard.Key; A: Phaser.Input.Keyboard.Key; S: Phaser.Input.Keyboard.Key; D: Phaser.Input.Keyboard.Key; SPACE: Phaser.Input.Keyboard.Key };
     private tickTimer = 0;
@@ -62,9 +80,16 @@ export class GameScene extends Phaser.Scene {
     private isConnected = false;
     private keyState = { W: false, A: false, S: false, D: false, SPACE: false };
     private localPlayerID!: string;
+    // private localZoneId = 0;
     private followedPlayerID!: string;
+    private activeZoneList!: ActiveZoneList;
 
-    private testEnemySprites: Phaser.GameObjects.Sprite[] = [];
+    private rezoneBatchCounter = 0;
+    private rezoneBatchLimit = 100;
+
+    private pools!: PoolManager;
+
+    private enemies: {[id:string]: Enemy} = {}
 
     public getPlayers() { return this.players; }
     public getLocalPlayerID() { return this.localPlayerID; }
@@ -76,11 +101,14 @@ export class GameScene extends Phaser.Scene {
     preload() {
         this.load.image('tileset', 'assets/tilemap/tileset.png');
         this.load.tilemapTiledJSON('map', 'assets/tilemap/mmorpg.json');
-        this.load.image('enemy-easy', '/assets/enemy-easy.png');
-        this.load.image('enemy-medium', '/assets/enemy-medium.png');
-        this.load.image('enemy-hard', '/assets/enemy-hard.png');
+        // this.load.image('enemy-easy', '/assets/enemy-easy.png');
+        // this.load.image('enemy-medium', '/assets/enemy-medium.png');
+        // this.load.image('enemy-hard', '/assets/enemy-hard.png');
         this.load.image('gotchi_placeholder', '/assets/gotchi_placeholder.png');
+        // this.load.image('shadow', '/assets/shadow.png');
         this.load.font('Pixelar', 'assets/fonts/pixelar/PixelarRegular.ttf');
+
+        this.load.atlas('enemies', 'assets/enemies/enemies.png', 'assets/enemies/enemies.json');
     }
 
     create(){
@@ -96,8 +124,8 @@ export class GameScene extends Phaser.Scene {
 
         // Draw 3x3 grid of zones with alternating colors
         zones = this.add.group();
-        for (let y = 0; y < 3; y++) {
-            for (let x = 0; x < 3; x++) {
+        for (let y = 0; y < 5; y++) {
+            for (let x = 0; x < 5; x++) {
                 const color = (x + y) % 2 === 0 ? 0xff0000 : 0x00ff00; // Red/Green
                 const rect = this.add.rectangle(
                     (x * zoneSize + zoneSize / 2) * tileSize,
@@ -111,8 +139,56 @@ export class GameScene extends Phaser.Scene {
             }
         }
 
-        this.cameras.main.setBounds(0, 0, zoneSize*3*tileSize, zoneSize*3*tileSize);
+        this.activeZoneList = {
+            currentZoneId: -1000,
+            xAxisZoneId: -1000,
+            yAxisZoneId: -1000,
+            diagonalZoneId: -1000,
+        }
 
+        // init body pool
+        var enemyBodyPool = this.add.group({
+            maxSize: MAX_CONCURRENT_ENEMIES,
+            classType: Phaser.GameObjects.Sprite,
+            createCallback: spriteGameObject => {
+                var sprite = spriteGameObject as Phaser.GameObjects.Sprite;
+                sprite.setTexture('enemies'); // Single texture atlas for all bodies
+                sprite.setVisible(false); // Hidden until assigned
+                sprite.setActive(false); // Inactive until assigned
+                sprite.setDepth(501);
+                sprite.setFrame('easy.png');
+                sprite.setScale(5);
+
+            }
+        });
+        enemyBodyPool.createMultiple({ key: 'enemies', quantity: MAX_CONCURRENT_ENEMIES, active: false, visible: false });
+
+        // Initialize shadow pool
+        var enemyShadowPool = this.add.group({
+            maxSize: MAX_CONCURRENT_ENEMIES,
+            classType: Phaser.GameObjects.Sprite,
+            createCallback: spriteGameObject => {
+                var sprite = spriteGameObject as Phaser.GameObjects.Sprite;
+                sprite.setTexture('enemies'); // Single texture atlas for all shadows
+                sprite.setVisible(false); // Hidden until assigned
+                sprite.setActive(false); // Inactive until assigned
+                sprite.setDepth(500);
+                sprite.setAlpha(0.5);
+                sprite.setFrame('shadow.png');
+                sprite.setScale(5);
+            }
+        });
+        enemyShadowPool.createMultiple({ key: 'enemies', quantity: MAX_CONCURRENT_ENEMIES, active: false, visible: false });
+
+        this.pools = {
+            enemy: {
+                body: enemyBodyPool,
+                shadow: enemyShadowPool,
+                statBar: this.add.group(),
+            }
+        }
+
+        this.cameras.main.setBounds(0, 0, zoneSize*3*tileSize, zoneSize*3*tileSize);
 
         // this.createTilemap();
 
@@ -125,40 +201,29 @@ export class GameScene extends Phaser.Scene {
                 const messages = JSON.parse(event.data);
                 messages.forEach((msg:any) => {
                     switch (msg.type){
+                        case 'activeZones':
+                            this.handleActiveZoneList(msg.data);
+                            break;
                         case 'playerUpdates':
+                            console.log(msg);
                             msg.data.forEach((update:any) => {
                                 this.addOrUpdatePlayer(update);
                             });
                         break;
 
                         case 'enemyUpdates':
+                            let i = 0;
                             msg.data.forEach((update:any) => {
                                 this.addOrUpdateEnemy(update);
+                                i++;
                             })
+                            // console.log("processed enemy updates: ", i);
                         break;
 
                         default: break;
                     }
-                    // Uncomment for enemies (disabled due to sprite limit)
-                    /*
-                    else if (msg.type === 'enemyUpdates') {
-                        msg.data.forEach(update => {
-                            if (!enemies[update.enemyId]) {
-                                enemies[update.enemyId] = this.add.rectangle(
-                                    update.x * tileSize * scale,
-                                    update.y * tileSize * scale,
-                                    10 * tileSize * scale,
-                                    10 * tileSize * scale,
-                                    0xff00ff
-                                );
-                                enemies[update.enemyId].setOrigin(0.5);
-                            } else {
-                                enemies[update.enemyId].x = update.x * tileSize * scale;
-                                enemies[update.enemyId].y = update.y * tileSize * scale;
-                            }
-                        });
-                    }
-                    */
+
+                    this.rezoneBatchCounter = 0;
                 });
             }
 
@@ -173,21 +238,76 @@ export class GameScene extends Phaser.Scene {
         window.addEventListener('resize', () => this.resizeGame());
 
 
-        // create some test enemies
-        // var layer = this.add.spriteGPULayer('enemy-easy', 1000);
-        for (let i = 0; i < 20000; i++){
-            // var template = {
-            //     x: Math.random() * zoneSize * tileSize,
-            //     y: Math.random() * zoneSize * tileSize,
-            // }
-            // var sprite = this.add.sprite(
-            //     Math.random() * zoneSize * tileSize * 12,
-            //     Math.random() * zoneSize * tileSize * 12,
-            //     'enemy-easy'
-            // )
-            // .setScale(10);
 
-            // this.testEnemySprites.push(sprite);
+    }
+
+    handleActiveZoneList(datum: any){
+        const {currentZoneId, xAxisZoneId, yAxisZoneId, diagonalZoneId } = datum;
+
+        if (!this.activeZoneList) return;
+
+        if (this.activeZoneList.currentZoneId !== currentZoneId &&
+            this.activeZoneList.currentZoneId !== xAxisZoneId &&
+            this.activeZoneList.currentZoneId !== yAxisZoneId &&
+            this.activeZoneList.currentZoneId !== diagonalZoneId
+        ) {
+            this.releasePoolSpritesOfZone(this.activeZoneList.currentZoneId);
+        }
+
+        if (this.activeZoneList.xAxisZoneId !== currentZoneId &&
+            this.activeZoneList.xAxisZoneId !== xAxisZoneId &&
+            this.activeZoneList.xAxisZoneId !== yAxisZoneId &&
+            this.activeZoneList.xAxisZoneId !== diagonalZoneId
+        ) {
+            this.releasePoolSpritesOfZone(this.activeZoneList.xAxisZoneId);
+        }
+
+        if (this.activeZoneList.yAxisZoneId !== currentZoneId &&
+            this.activeZoneList.yAxisZoneId !== xAxisZoneId &&
+            this.activeZoneList.yAxisZoneId !== yAxisZoneId &&
+            this.activeZoneList.yAxisZoneId !== diagonalZoneId
+        ) {
+            this.releasePoolSpritesOfZone(this.activeZoneList.yAxisZoneId);
+        }
+
+        if (this.activeZoneList.diagonalZoneId !== currentZoneId &&
+            this.activeZoneList.diagonalZoneId !== xAxisZoneId &&
+            this.activeZoneList.diagonalZoneId !== yAxisZoneId &&
+            this.activeZoneList.diagonalZoneId !== diagonalZoneId
+        ) {
+            this.releasePoolSpritesOfZone(this.activeZoneList.diagonalZoneId);
+        }
+
+        this.activeZoneList = {
+            currentZoneId: currentZoneId,
+            xAxisZoneId: xAxisZoneId,
+            yAxisZoneId: yAxisZoneId,
+            diagonalZoneId: diagonalZoneId,
+        }
+    }
+
+    releasePoolSpritesOfZone(zoneId: number){
+        // Guard against undefined pools
+        if (this.pools && this.pools.enemy) {
+            // Deactivate all existing enemy sprites instead of clearing pools
+            for (const enemyId in this.enemies) {
+                const enemy = this.enemies[enemyId];
+                if (enemy.zoneId === zoneId) {
+                    if (enemy.bodySprite) {
+                        this.pools.enemy.body.killAndHide(enemy.bodySprite);
+                        enemy.bodySprite = null;
+                        enemy.hasPoolSprites = false;
+                    }
+                    if (enemy.shadowSprite) {
+                        this.pools.enemy.shadow.killAndHide(enemy.shadowSprite);
+                        enemy.shadowSprite = null;
+                        enemy.hasPoolSprites = false;
+                    }
+                    delete this.enemies[enemyId];
+                }
+            }
+        } else {
+            console.warn('Pools not initialized yet, skipping zone change cleanup');
         }
     }
 
@@ -308,7 +428,7 @@ export class GameScene extends Phaser.Scene {
     */
 
     addOrUpdatePlayer(datum: any){
-        const {playerId, x, y} = datum;
+        const {playerId, x, y, zoneId} = datum;
         // console.log(id, x, y);
 
         // NEW PLAYER
@@ -317,9 +437,10 @@ export class GameScene extends Phaser.Scene {
             this.localPlayerID = playerId;
 
             const newPlayerSprite = this.add.sprite(x, y, 'gotchi_placeholder')
-            .setDepth(1000)
-            .setScale(10)
+                .setDepth(1000)
+                .setScale(10)
             // .setName(`player-${id}`);
+
 
             this.cameras.main.startFollow(newPlayerSprite);
 
@@ -328,14 +449,6 @@ export class GameScene extends Phaser.Scene {
                 gotchiId: 0,
                 isAssignedSVG: false,
                 positionBuffer: [],
-                // hp: data.hp || 0,
-                // maxHp: data.maxHp || 0,
-                // ap: data.ap || 0,
-                // maxAp: data.maxAp || 0,
-                // gameXp: data.gameXp || 0,
-                // gameLevel: data.gameLevel || 1,
-                // gameXpOnCurrentLevel: data.gameXpOnCurrentLevel || 0,
-                // gameXpTotalForNextLevel: data.gameXpTotalForNextLevel || 0
             };
             console.log(`Added placeholder player ${playerId}`);
         }
@@ -345,6 +458,42 @@ export class GameScene extends Phaser.Scene {
             this.players[playerId].sprite.x = x;
             this.players[playerId].sprite.y = y;
             // console.log(x, y);
+        }
+
+        // LOCAL PLAYER
+        if (this.localPlayerID === playerId) {
+            // if (this.localZoneId !== zoneId) {
+            //     // Clear all sprites from pools when changing zones
+            //     this.deactivateAllEnemySprites();
+            //     console.log("zone change: cleared enemy sprite pools");
+            //     this.localZoneId = zoneId;
+            // }
+        }
+    }
+
+    deactivateAllEnemySprites() {
+        // Guard against undefined pools
+        if (this.pools && this.pools.enemy) {
+            // Deactivate all existing enemy sprites instead of clearing pools
+            let i = 0;
+            for (const enemyId in this.enemies) {
+                const enemy = this.enemies[enemyId];
+                if (enemy.bodySprite) {
+                    this.pools.enemy.body.killAndHide(enemy.bodySprite);
+                    enemy.bodySprite = null;
+                    enemy.hasPoolSprites = false;
+                }
+                if (enemy.shadowSprite) {
+                    this.pools.enemy.shadow.killAndHide(enemy.shadowSprite);
+                    enemy.shadowSprite = null;
+                    enemy.hasPoolSprites = false;
+                }
+                delete this.enemies[enemyId];
+                i++;
+            }
+            console.log("enemies length: ", i);
+        } else {
+            console.warn('Pools not initialized yet, skipping zone change cleanup');
         }
     }
 
@@ -413,37 +562,61 @@ export class GameScene extends Phaser.Scene {
         }
     }
 */
+
     addOrUpdateEnemy(data: any) {
         const {enemyId, x, y, zoneId, timestamp, type, hp } = data;
 
-        // NEW ENEMY
-        if (!this.enemies[enemyId] && hp > 0) {
-            console.log("add new enemy", data);
-            const texture = `enemy-${type}`;
-            console.log(texture);
-            const bodySprite = this.add.sprite(x, y, texture)
-            .setDepth(3000)
-            .setScale(1)
-            .setScale(10);
-            // const shadow = this.add.ellipse(0, bodySprite.height / 2, 24, 16, 0x000000, 0.5).setDepth(999).setAlpha(0.5);
-            // const hpBar = this.add.rectangle(0, -30, 32, 5, 0xff0000).setOrigin(0.5, 0);
-            // const container = this.add.container(x, y, [shadow, sprite, hpBar]).setDepth(1000);
+        var isMatchingZone = zoneId === this.activeZoneList.currentZoneId ||
+            zoneId === this.activeZoneList.xAxisZoneId ||
+            zoneId === this.activeZoneList.yAxisZoneId ||
+            zoneId === this.activeZoneList.diagonalZoneId;
 
-            this.enemies[enemyId] = {
-                bodySprite: bodySprite,
-                shadowSprite: undefined,
-                hpBar: undefined,
-                maxHp: hp,
-                type: type,
-                positionBuffer: [],
-                hp: hp,
-                direction: data.direction
-            };
-            console.log(`Added enemy ${enemyId}`);
-        } 
+        if (this.rezoneBatchCounter >= this.rezoneBatchLimit || !isMatchingZone) {
+            return;
+        }
 
-        return;
-        
+        var enemy = this.enemies[enemyId]
+        var hasPoolSprites = enemy ? enemy.hasPoolSprites : true;
+
+
+        // NEW ENEMY or DOES NOT HAVE POOL SPRITES
+        if ((!enemy || !hasPoolSprites) && hp > 0) {
+            this.rezoneBatchCounter++;
+
+            const bodySprite = this.pools.enemy.body.get();
+            if (bodySprite) {
+                bodySprite.setVisible(true)
+                .setActive(true)
+                .setDepth(500)
+                .setAlpha(1)
+                .setFrame(`${type}.png`);
+            }
+
+            const shadowSprite = this.pools.enemy.shadow.get();
+            if (shadowSprite){
+                shadowSprite.setVisible(true)
+                    .setActive(true)
+                    .setDepth(499)
+                    .setAlpha(0.5)
+                    .setFrame('shadow.png');
+            }
+
+            if (bodySprite && shadowSprite) {
+                this.enemies[enemyId] = {
+                    bodySprite,
+                    shadowSprite,
+                    hpBar: undefined,
+                    maxHp: hp,
+                    type: type,
+                    positionBuffer: [],
+                    hp: hp,
+                    direction: data.direction,
+                    zoneId: zoneId,
+                    hasPoolSprites: true,
+                };
+            }
+        }
+
         // GENERAL UPDATE
         if (this.enemies[enemyId] && hp > 0) {
             const enemy = this.enemies[enemyId];
@@ -460,54 +633,57 @@ export class GameScene extends Phaser.Scene {
             enemy.hp = hp;
             if (data.direction !== undefined) {
                 enemy.direction = data.direction;
-                // Add directional sprite logic here if enemy textures support it
             }
-            // this.updateEnemyHP(enemyId);
-        }  
-        
+        }
+
         // DEAD
-        if (hp <= 0) {
-            this.removeEnemy(enemyId);
+        if (hp <= 0 && this.enemies[enemyId]) {
+            const enemy = this.enemies[enemyId];
+            if (enemy.bodySprite && enemy.shadowSprite) {
+                this.pools.enemy.body.killAndHide(enemy.bodySprite);
+                this.pools.enemy.shadow.killAndHide(enemy.shadowSprite);
+            }
+            delete this.enemies[enemyId];
         }
     }
 
-    handleDamageUpdate(data: any) {
-        const { id, type, damage } = data;
-        let x: number, y: number, textColor: string, offsetY: number;
+    // handleDamageUpdate(data: any) {
+    //     const { id, type, damage } = data;
+    //     let x: number, y: number, textColor: string, offsetY: number;
 
-        if (type === "enemy" && this.enemies[id]) {
-            x = this.enemies[id].bodySprite.x;
-            y = this.enemies[id].bodySprite.y;
-            textColor = '#ffffff';
-            offsetY = -32;
-        } else if (type === "player" && this.players[id]) {
-            x = this.players[id].sprite.x;
-            y = this.players[id].sprite.y;
-            textColor = '#ff0000';
-            offsetY = -64;
-        } else {
-            return;
-        }
+    //     if (type === "enemy" && this.enemies[id]) {
+    //         x = this.enemies[id].bodySprite.x;
+    //         y = this.enemies[id].bodySprite.y;
+    //         textColor = '#ffffff';
+    //         offsetY = -32;
+    //     } else if (type === "player" && this.players[id]) {
+    //         x = this.players[id].sprite.x;
+    //         y = this.players[id].sprite.y;
+    //         textColor = '#ff0000';
+    //         offsetY = -64;
+    //     } else {
+    //         return;
+    //     }
 
-        const damageText = this.getPooledText(x, y + offsetY, damage.toString());
-        damageText.setStyle({
-            fontFamily: 'Pixelar',
-            fontSize: '24px',
-            color: textColor,
-            stroke: '#000000',
-            strokeThickness: 1,
-        });
-        damageText.setOrigin(0.5, 0.5).setDepth(3000);
+    //     const damageText = this.getPooledText(x, y + offsetY, damage.toString());
+    //     damageText.setStyle({
+    //         fontFamily: 'Pixelar',
+    //         fontSize: '24px',
+    //         color: textColor,
+    //         stroke: '#000000',
+    //         strokeThickness: 1,
+    //     });
+    //     damageText.setOrigin(0.5, 0.5).setDepth(3000);
 
-        this.tweens.add({
-            targets: damageText,
-            y: damageText.y - 20,
-            alpha: 0,
-            duration: 1000,
-            ease: 'Quad.easeIn',
-            onComplete: () => damageText.setVisible(false),
-        });
-    }
+    //     this.tweens.add({
+    //         targets: damageText,
+    //         y: damageText.y - 20,
+    //         alpha: 0,
+    //         duration: 1000,
+    //         ease: 'Quad.easeIn',
+    //         onComplete: () => damageText.setVisible(false),
+    //     });
+    // }
 
     handleLevelUp(data: any) {
         const player = this.players[this.localPlayerID];
@@ -577,28 +753,28 @@ export class GameScene extends Phaser.Scene {
         }
     }
 
-    removeEnemy(id: string) {
-        if (this.enemies[id]) {
-            const x = this.enemies[id].bodySprite.x;
-            const y = this.enemies[id].bodySprite.y;
-            this.createRectExplosion(x, y);
-            this.enemies[id].bodySprite.destroy();
-            this.enemies[id].shadowSprite?.destroy();
-            this.enemies[id].hpBar?.destroy();
-            delete this.enemies[id];
-        }
-    }
+    // removeEnemy(id: string) {
+    //     if (this.enemies[id]) {
+    //         const x = this.enemies[id].bodySprite.x;
+    //         const y = this.enemies[id].bodySprite.y;
+    //         this.createRectExplosion(x, y);
+    //         this.enemies[id].bodySprite.destroy();
+    //         this.enemies[id].shadowSprite?.destroy();
+    //         this.enemies[id].hpBar?.destroy();
+    //         delete this.enemies[id];
+    //     }
+    // }
 
-    updateEnemyHP(id: string) {
-        if (this.enemies[id]) {
-            const enemy = this.enemies[id];
-            if (enemy.hp <= 0) {
-                this.removeEnemy(id);
-            } else {
-                // enemy.hpBar?.width = 32 * (enemy.hp / enemy.maxHp);
-            }
-        }
-    }
+    // updateEnemyHP(id: string) {
+    //     if (this.enemies[id]) {
+    //         const enemy = this.enemies[id];
+    //         if (enemy.hp <= 0) {
+    //             this.removeEnemy(id);
+    //         } else {
+    //             // enemy.hpBar?.width = 32 * (enemy.hp / enemy.maxHp);
+    //         }
+    //     }
+    // }
 
     handleAttackUpdates(data: any) {
         const radius = data.radius;
@@ -740,20 +916,26 @@ export class GameScene extends Phaser.Scene {
                     console.error('Failed to send input:', e);
                 }
             }
-
-            // take this opportunity to move all our sprites
-            var enemyLength = this.testEnemySprites.length;
-            for (let i = 0; i < enemyLength; i++){
-                this.testEnemySprites[i].x += (Math.random()-0.5) * 10; 
-                this.testEnemySprites[i].y += (Math.random()-0.5) * 10;
-            }
         }
-
+        
         this.registry.set('localfps', 1/delta);
 
         this.interpolatePlayers();
         this.interpolateEnemies();
     }
+
+    // cullSprites() {
+    //     const camera = this.cameras.main;
+    //     const worldView = camera.worldView;
+
+    //     this.allSprites.children.forEach((sprite) => {
+    //         if (sprite instanceof Phaser.GameObjects.Sprite) {
+    //             const inView = worldView.contains(sprite.x, sprite.y);
+    //             sprite.setVisible(inView);
+    //             sprite.setActive(inView);
+    //         }
+    //     });
+    // }
 
     interpolatePlayers() {
         for (const id in this.players) {
@@ -791,13 +973,20 @@ export class GameScene extends Phaser.Scene {
     }
 
     interpolateEnemies() {
+        if (!this.enemies) return;
+
+        let i = 0;
         for (const id in this.enemies) {
             const enemy = this.enemies[id];
+            if (!enemy) continue;
+            if (!enemy || !enemy.bodySprite || !enemy.shadowSprite) continue;
             if (enemy.positionBuffer.length === 0) continue;
 
-            var latest = enemy.positionBuffer[enemy.positionBuffer.length-1];
-            enemy.bodySprite.setPosition(latest.x, latest.y);
-            continue;
+            // for testing without interp
+            // var latest = enemy.positionBuffer[enemy.positionBuffer.length-1];
+            // enemy.bodySprite.setPosition(latest.x, latest.y);
+            // enemy.shadowSprite?.setPosition(latest.x, latest.y+(enemy.bodySprite.height / 2)*10);
+            // continue;
 
             const targetTime = Date.now() - INTERPOLATION_DELAY_MS;
             const buffer = enemy.positionBuffer;
@@ -821,11 +1010,16 @@ export class GameScene extends Phaser.Scene {
                 const interpX = older.x + (newer.x - older.x) * Math.min(1, Math.max(0, alpha));
                 const interpY = older.y + (newer.y - older.y) * Math.min(1, Math.max(0, alpha));
                 enemy.bodySprite.setPosition(interpX, interpY);
+                enemy.shadowSprite.setPosition(interpX, interpY + (enemy.bodySprite.height *2.5));
             } else if (buffer.length > 0) {
                 const last = buffer[buffer.length - 1];
                 enemy.bodySprite.setPosition(last.x, last.y);
+                enemy.shadowSprite.setPosition(last.x, last.y + (enemy.bodySprite.height *2.5));
             }
+
+            i++;
         }
+
     }
 
     getPooledCircle(x: number, y: number, radius: number, color: number): Phaser.GameObjects.Graphics {
