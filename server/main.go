@@ -330,7 +330,6 @@ func (gs *GameServer) processZone(zone *Zone) {
 	}
 
 	// Update players
-	zone.mu.Lock()
 	dt := float32(TickInterval.Seconds())
 	for _, player := range zone.Players {
 		player.X += player.VX * dt
@@ -341,15 +340,13 @@ func (gs *GameServer) processZone(zone *Zone) {
 			continue
 		}
 	}
-	zone.mu.Unlock()
 
 	timestamp := time.Now().UnixMilli()
 
 	// Prepare and send updates for each player in this zone
-	zone.mu.Lock()
 	for _, player := range zone.Players {
 		activeZones := gs.getActiveZones(player)
-		log.Printf("Active zones for player %s: %+v", player.ID, activeZones)
+		// log.Printf("Active zones for player %s: %+v", player.ID, activeZones)
 
 		var allPlayerUpdates []PlayerUpdate
 		var allEnemyUpdates []EnemyUpdate
@@ -408,7 +405,6 @@ func (gs *GameServer) processZone(zone *Zone) {
 			log.Printf("Error sending batch to %s: %v", player.ID, err)
 		}
 	}
-	zone.mu.Unlock()
 }
 
 // func clampToZone(e *Enemy, gs *GameServer) {
@@ -489,7 +485,8 @@ func (gs *GameServer) switchZone(player *Player, oldZone *Zone, newZoneID int) {
 	log.Println("set to new zone: ", player.ZoneID)
 	player.VX = 0
 	player.VY = 0
-	newZone := gs.Zones[newZoneID]
+	newZone := gs.getZoneByID(newZoneID)
+	// newZone := gs.Zones[newZoneID]
 	newZone.Players[player.ID] = player
 	log.Printf("Player %s switched from Zone %d (%d,%d) to Zone %d (%d,%d)",
 		player.ID, oldZone.ID, oldZone.X, oldZone.Y, newZone.ID, newZone.X, newZone.Y)

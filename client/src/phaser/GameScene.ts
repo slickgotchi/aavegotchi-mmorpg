@@ -200,12 +200,13 @@ export class GameScene extends Phaser.Scene {
             this.ws.onmessage = (event) => {
                 const messages = JSON.parse(event.data);
                 messages.forEach((msg:any) => {
+                    // console.log("Message");
                     switch (msg.type){
                         case 'activeZones':
                             this.handleActiveZoneList(msg.data);
                             break;
                         case 'playerUpdates':
-                            console.log(msg);
+                            // console.log(msg);
                             msg.data.forEach((update:any) => {
                                 this.addOrUpdatePlayer(update);
                             });
@@ -1062,7 +1063,7 @@ export class GameScene extends Phaser.Scene {
 
         this.scale.resize(newWidth, newHeight);
         const zoom = Math.min(newWidth / GAME_WIDTH, newHeight / GAME_HEIGHT);
-        this.cameras.main.setZoom(zoom / 12);
+        this.cameras.main.setZoom(zoom / 20);
 
         const canvas = this.game.canvas;
         canvas.style.position = 'absolute';
