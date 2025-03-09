@@ -134,23 +134,6 @@ export class GameScene extends Phaser.Scene {
             SPACE: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
         };
 
-        // Draw 3x3 grid of zones with alternating colors
-        // zones = this.add.group();
-        // for (let y = 0; y < 5; y++) {
-        //     for (let x = 0; x < 5; x++) {
-        //         const color = (x + y) % 2 === 0 ? 0xff0000 : 0x00ff00; // Red/Green
-        //         const rect = this.add.rectangle(
-        //             (x * zoneSize + zoneSize / 2) * tileSize,
-        //             (y * zoneSize + zoneSize / 2) * tileSize,
-        //             zoneSize*tileSize,
-        //             zoneSize*tileSize,
-        //             color
-        //         );
-        //         rect.setOrigin(0.5);
-        //         zones.add(rect);
-        //     }
-        // }
-
         this.activeZoneList = {
             currentZoneId: -1000,
             xAxisZoneId: -1000,
@@ -200,7 +183,6 @@ export class GameScene extends Phaser.Scene {
             }
         }
 
-        this.cameras.main.setBounds(0, 0, zoneSize*3*tileSize, zoneSize*3*tileSize);
 
         // this.createTilemap();
 
@@ -258,18 +240,28 @@ export class GameScene extends Phaser.Scene {
     }
 
     handleWelcome(datum: any) {
-        console.log(datum);
-        const { zones } = datum;
+        const { playerId, zones } = datum;
+        this.localPlayerID = playerId;
+        console.log("Welcome ", this.localPlayerID);
+
+        let maxX = 0;
+        let maxY = 0;
+
         zones.forEach((zone: any) => {
             const {id, tilemapRef, worldX, worldY } = zone;
-            console.log(zone);
             this.createTilemapZone(id, tilemapRef, worldX, worldY);
+
+            if (worldX > maxX) maxX = worldX;
+            if (worldY > maxY) maxY = worldY;
         });
+
+        // set camera extents to the max world positions + a zone width/height
+        this.cameras.main.setBounds(0, 0, maxX + zoneSize*tileSize, maxY + zoneSize*tileSize);
+
     }
 
     handleActiveZoneList(datum: any){
         const {currentZoneId, xAxisZoneId, yAxisZoneId, diagonalZoneId } = datum;
-        console.log(datum);
 
         if (!this.activeZoneList) return;
 
@@ -461,15 +453,11 @@ export class GameScene extends Phaser.Scene {
         // NEW PLAYER
         if (!this.players[playerId]){
 
-            this.localPlayerID = playerId;
+            // this.localPlayerID = playerId;
 
             const newPlayerSprite = this.add.sprite(x, y, 'gotchi_placeholder')
                 .setDepth(1000)
                 .setScale(10)
-            // .setName(`player-${id}`);
-
-
-            this.cameras.main.startFollow(newPlayerSprite);
 
             this.players[playerId] = {
                 sprite: newPlayerSprite,
@@ -495,6 +483,10 @@ export class GameScene extends Phaser.Scene {
             //     console.log("zone change: cleared enemy sprite pools");
             //     this.localZoneId = zoneId;
             // }
+            if (!this.followedPlayerID) {
+                this.followedPlayerID = this.localPlayerID;
+                this.cameras.main.startFollow(this.players[playerId].sprite)
+            }
         }
     }
 
@@ -942,7 +934,7 @@ export class GameScene extends Phaser.Scene {
                     SPACE: this.keys.SPACE.isDown,
                 };
                 const message = JSON.stringify({ type: 'input', data: { 
-                    playerId: this.localPlayerID, keys: this.keyState } });
+                    keys: this.keyState } });
                 try {
                     this.ws.send(message);
                     // console.log('Sent input for local player:', this.localPlayerID, this.keyState); // Add this log
@@ -957,19 +949,6 @@ export class GameScene extends Phaser.Scene {
         this.interpolatePlayers();
         this.interpolateEnemies();
     }
-
-    // cullSprites() {
-    //     const camera = this.cameras.main;
-    //     const worldView = camera.worldView;
-
-    //     this.allSprites.children.forEach((sprite) => {
-    //         if (sprite instanceof Phaser.GameObjects.Sprite) {
-    //             const inView = worldView.contains(sprite.x, sprite.y);
-    //             sprite.setVisible(inView);
-    //             sprite.setActive(inView);
-    //         }
-    //     });
-    // }
 
     interpolatePlayers() {
         for (const id in this.players) {

@@ -91,6 +91,18 @@ var World = WorldConfig{
 	ZoneSize: 256,
 }
 
+func IsEmptyTilemapGridName(tilemapGridName string) bool {
+	emptyValues := map[string]struct{}{
+		"":      {},
+		"empty": {},
+		"null":  {},
+		"nil":   {},
+		"void":  {},
+	}
+	_, exists := emptyValues[tilemapGridName]
+	return exists
+}
+
 // ZonePosition stores the calculated grid position for a zone
 // type ZonePosition struct {
 // 	GridX  int
@@ -169,7 +181,8 @@ func InitializeWorld() {
 	}
 
 	// Automatically calculate neighbors for each zone
-	for _, zoneConfig := range World.ZoneConfigs {
+	for i := range World.ZoneConfigs {
+		zoneConfig := &World.ZoneConfigs[i]
 		// zoneConfig := &World.ZoneConfigs[i] // grab a reference to zone config
 		// log.Println("find neightbours for zone: ", zoneConfig.ID)
 		// pos, exists := zonePositions[zoneConfig.ID]
@@ -204,6 +217,10 @@ func InitializeWorld() {
 				zoneConfig.Neighbors[idx] = 0 // Out of bounds, set to null
 			}
 		}
+	}
+
+	for _, zoneConfig := range World.ZoneConfigs {
+		log.Println("ZoneConfig.Neighbours: ", zoneConfig.Neighbors)
 	}
 
 	// Validate ZoneGrid entries

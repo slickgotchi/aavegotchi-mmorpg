@@ -25,8 +25,9 @@ const (
 
 // Message is a generic struct for client/server communication
 type Message struct {
-	Type string      `json:"type"`
-	Data interface{} `json:"data"`
+	Type     string      `json:"type"`
+	Data     interface{} `json:"data"`
+	PlayerID string      `json:"-"` // Not serialized to JSON (we add this in our input reading func)
 }
 
 // Zone represents an independent game zone
@@ -148,8 +149,8 @@ func NewGameServer() *GameServer {
 		log.Println("Added zone ", zoneConfig.ID, " to gs.Zones. Start populating...")
 
 		// null/0 zones we don't spawn anything
-		if zoneConfig.ID == 0 {
-			log.Println("Zone 0 does not get populated. Continuing...")
+		if IsEmptyTilemapGridName(zoneConfig.TilemapRef) {
+			log.Println("Empty zones do not get populated. Continuing...")
 			continue
 		}
 
@@ -213,29 +214,33 @@ func (gs *GameServer) getActiveZones(player *Player) ActiveZoneList {
 	}
 
 	// Find the config for the current zone
-	var currentZoneConfig ZoneConfig
-	for _, zoneConfig := range World.ZoneConfigs {
-		if zoneConfig.ID == playerCurrentZoneID {
-			currentZoneConfig = zoneConfig
-			break
-		}
+	currentZoneConfig, err := getZoneConfigByZoneID(playerCurrentZoneID)
+	if err != nil {
+		log.Printf("Warning: Requested zone %d is not valid", playerCurrentZoneID)
 	}
 
+	// find the player local coordinates within the zone
 	localX := int(player.X) % ZoneWidthPixels
 	localY := int(player.Y) % ZoneHeightPixels
 
+	// determine x and y
 	var xAxisZoneID, yAxisZoneID int
 	if localX > ZoneWidthPixels/2 {
+		// player on right side of zone
 		xAxisZoneID = currentZoneConfig.Neighbors[2]
 	} else {
+		// player on left side of zone
 		xAxisZoneID = currentZoneConfig.Neighbors[6]
 	}
 	if localY > ZoneHeightPixels/2 {
+		// player on south side of zone
 		yAxisZoneID = currentZoneConfig.Neighbors[4]
 	} else {
+		// player on north side of zone
 		yAxisZoneID = currentZoneConfig.Neighbors[0]
 	}
 
+	// determine diagonals
 	adjacentDiagonals := []struct {
 		zoneID    int
 		centerX   float32
@@ -289,12 +294,14 @@ func (gs *GameServer) getActiveZones(player *Player) ActiveZoneList {
 		}
 	}
 
-	return ActiveZoneList{
+	activeZoneList := ActiveZoneList{
 		CurrentZoneID:  playerCurrentZoneID,
 		XAxisZoneID:    xAxisZoneID,
 		YAxisZoneID:    yAxisZoneID,
 		DiagonalZoneID: diagonalZoneID,
 	}
+
+	return activeZoneList
 }
 
 func (gs *GameServer) processZone(zone *Zone) {
@@ -303,37 +310,66 @@ func (gs *GameServer) processZone(zone *Zone) {
 		msg := <-zone.Inbound
 		switch msg.Type {
 		case "input":
-			if data, ok := msg.Data.(map[string]interface{}); ok {
-				playerID, pidOk := data["playerId"].(string)
-				if !pidOk {
-					continue
-				}
-				player := zone.Players[playerID]
-				if player == nil {
-					continue
-				}
-
-				if keys, ok := data["keys"].(map[string]interface{}); ok {
-					player.VX = 0
-					player.VY = 0
-					speed := float32(100 * TileSize) // 100 tiles/sec
-					if w, ok := keys["W"].(bool); ok && w {
-						player.VY = -speed
-					}
-					if s, ok := keys["S"].(bool); ok && s {
-						player.VY = speed
-					}
-					if a, ok := keys["A"].(bool); ok && a {
-						player.VX = -speed
-					}
-					if d, ok := keys["D"].(bool); ok && d {
-						player.VX = speed
-					}
-					if space, ok := keys["SPACE"].(bool); ok && space {
-						log.Printf("Player %s pressed SPACE in Zone %d", playerID, zone.ID)
-					}
-				}
+			// Use the PlayerID attached to the message
+			playerID := msg.PlayerID
+			player := zone.Players[playerID]
+			if player == nil {
+				log.Printf("Player %s not found in zone %d", playerID, zone.ID)
+				continue
 			}
+
+			data, ok := msg.Data.(map[string]interface{})
+			if !ok {
+				log.Printf("Invalid input message data for player %s: expected map", playerID)
+				continue
+			}
+			keys, ok := data["keys"].(map[string]interface{})
+			if !ok {
+				log.Printf("Invalid input message keys for player %s: expected map", playerID)
+				continue
+			}
+
+			player.VX = 0
+			player.VY = 0
+			speed := float32(100 * TileSize)
+			if w, ok := keys["W"].(bool); ok && w {
+				player.VY = -speed
+			}
+			if s, ok := keys["S"].(bool); ok && s {
+				player.VY = speed
+			}
+			if a, ok := keys["A"].(bool); ok && a {
+				player.VX = -speed
+			}
+			if d, ok := keys["D"].(bool); ok && d {
+				player.VX = speed
+			}
+			if space, ok := keys["SPACE"].(bool); ok && space {
+				log.Printf("Player %s pressed SPACE in Zone %d", playerID, zone.ID)
+			}
+
+			// if data, ok := msg.Data.(map[string]interface{}); ok {
+			// 	if keys, ok := data["keys"].(map[string]interface{}); ok {
+			// 		player.VX = 0
+			// 		player.VY = 0
+			// 		speed := float32(100 * TileSize) // 100 tiles/sec
+			// 		if w, ok := keys["W"].(bool); ok && w {
+			// 			player.VY = -speed
+			// 		}
+			// 		if s, ok := keys["S"].(bool); ok && s {
+			// 			player.VY = speed
+			// 		}
+			// 		if a, ok := keys["A"].(bool); ok && a {
+			// 			player.VX = -speed
+			// 		}
+			// 		if d, ok := keys["D"].(bool); ok && d {
+			// 			player.VX = speed
+			// 		}
+			// 		if space, ok := keys["SPACE"].(bool); ok && space {
+			// 			log.Printf("Player %s pressed SPACE in Zone %d", playerID, zone.ID)
+			// 		}
+			// 	}
+			// }
 		default:
 			log.Printf("Unhandled message type in Zone %d: %s", zone.ID, msg.Type)
 		}
@@ -345,7 +381,9 @@ func (gs *GameServer) processZone(zone *Zone) {
 		player.X += player.VX * dt
 		player.Y += player.VY * dt
 		newZoneID := gs.calculateZoneID(player.X, player.Y, player)
-		if newZoneID == 0 || player.X < 0 || player.Y < 0 {
+
+		// check for null zone or player out of bounds
+		if newZoneID == 0 || IsEmptyTilemapGridName(gs.Zones[newZoneID].TilemapRef) || player.X < 0 || player.Y < 0 {
 			player.X -= player.VX * dt
 			player.Y -= player.VY * dt
 		} else if newZoneID != player.ZoneID {
@@ -543,20 +581,23 @@ func (gs *GameServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Send batched messages as a single array
 	batch := []Message{
 		{Type: "welcome", Data: map[string]interface{}{
-			"zones": zonesInfo,
+			"playerId": playerID,
+			"zones":    zonesInfo,
 		}},
 	}
 	if err := player.Conn.WriteJSON(batch); err != nil {
 		log.Printf("Error sending welcome message to %s: %v", player.ID, err)
 	}
 
-	// Rest of the function remains the same until cleanup
+	// Read all current messages for this specific connection
 	for {
 		var msg Message
 		if err := conn.ReadJSON(&msg); err != nil {
 			log.Printf("Error reading from %s: %v", playerID, err)
 			break
 		}
+		// Attach the playerID to the message
+		msg.PlayerID = playerID
 		currentZone := gs.getZoneByPlayerID(playerID)
 		if currentZone != nil {
 			select {
