@@ -20,7 +20,7 @@ const (
 	ZoneWidthPixels   = 256 * 32 // Tiles
 	ZoneHeightPixels  = 256 * 32 // Tiles
 	TileSize          = 32       // Pixels
-	NumEnemiesPerZone = 2000
+	NumEnemiesPerZone = 100
 )
 
 // Message is a generic struct for client/server communication
@@ -33,11 +33,25 @@ type Message struct {
 type Zone struct {
 	ID         int
 	TilemapRef string
-	X, Y       int // Grid position (e.g., 0,0 for bottom-left)
+	GridX      int
+	GridY      int // Grid position (e.g., 0,0 for bottom-left)
+	WorldX     float32
+	WorldY     float32
 	Players    map[string]*Player
 	Enemies    map[string]*Enemy
 	Inbound    chan Message
 	mu         sync.Mutex
+}
+
+// sent to client during welcome message
+type ZoneInfo struct {
+	ID         int    `json:"id"`
+	TilemapRef string `json:"tilemapRef"`
+	// GridX      int     `json:"gridX"`
+	// GridY      int     `json:"gridY"`
+	WorldX float32 `json:"worldX"`
+	WorldY float32 `json:"worldY"`
+	// Neighbors  [8]int  `json:"neighbors"`
 }
 
 // Player represents a player entity
@@ -64,7 +78,7 @@ type Enemy struct {
 
 // GameServer holds the overall state
 type GameServer struct {
-	Zones []*Zone
+	Zones map[int]*Zone
 }
 
 // PlayerUpdate represents player data sent to clients
@@ -110,27 +124,35 @@ func NewGameServer() *GameServer {
 	InitializeWorld()
 
 	gs := &GameServer{
-		Zones: make([]*Zone, len(World.Zones)),
+		Zones: make(map[int]*Zone),
 	}
 
-	// Initialize zones from config
-	for i, config := range World.Zones {
-		// Get the grid position from the calculated zonePositions
-		pos, exists := zonePositions[config.ID]
-		if !exists {
-			log.Fatalf("Grid position for zone ID %d not found", config.ID)
-		}
-
-		gs.Zones[i] = &Zone{
-			ID:         config.ID,
-			TilemapRef: config.TilemapRef,
-			X:          pos.GridX, // Use calculated GridX
-			Y:          pos.GridY, // Use calculated GridY
+	// Populate zones from world configs
+	for _, zoneConfig := range World.ZoneConfigs {
+		// create a new zone from our zone config
+		zone := &Zone{
+			ID:         zoneConfig.ID,
+			TilemapRef: zoneConfig.TilemapRef,
+			GridX:      zoneConfig.GridX, // Use calculated GridX
+			GridY:      zoneConfig.GridY, // Use calculated GridY
+			WorldX:     zoneConfig.WorldX,
+			WorldY:     zoneConfig.WorldY,
 			Players:    make(map[string]*Player),
 			Enemies:    make(map[string]*Enemy),
 			Inbound:    make(chan Message, 100),
 			mu:         sync.Mutex{},
 		}
+
+		gs.Zones[zoneConfig.ID] = zone
+
+		log.Println("Added zone ", zoneConfig.ID, " to gs.Zones. Start populating...")
+
+		// null/0 zones we don't spawn anything
+		if zoneConfig.ID == 0 {
+			log.Println("Zone 0 does not get populated. Continuing...")
+			continue
+		}
+
 		// Spawn enemies within the zone's bounds
 		for j := 0; j < NumEnemiesPerZone; j++ {
 			enemyType := "easy"
@@ -142,15 +164,13 @@ func NewGameServer() *GameServer {
 			} else {
 				enemyType = "hard"
 			}
-			enemyID := fmt.Sprintf("enemy%d_%d", config.ID, j)
+			enemyID := fmt.Sprintf("enemy%d_%d", zoneConfig.ID, j)
 			// Calculate enemy position based on the zone's grid position
-			zoneOffsetX := float32(pos.GridX * ZoneWidthPixels)
-			zoneOffsetY := float32(pos.GridY * ZoneHeightPixels)
-			gs.Zones[i].Enemies[enemyID] = &Enemy{
+			gs.Zones[zoneConfig.ID].Enemies[enemyID] = &Enemy{
 				ID:        enemyID,
-				ZoneID:    config.ID,
-				X:         zoneOffsetX + float32(rand.Intn(ZoneWidthPixels)), // Within zone bounds
-				Y:         zoneOffsetY + float32(rand.Intn(ZoneHeightPixels)),
+				ZoneID:    zoneConfig.ID,
+				X:         zoneConfig.WorldX + float32(rand.Intn(ZoneWidthPixels)), // Within zone bounds
+				Y:         zoneConfig.WorldY + float32(rand.Intn(ZoneHeightPixels)),
 				VX:        float32(rand.Float32()*0.5-1) * 100,
 				VY:        float32(rand.Float32()*0.5-1) * 100,
 				State:     "Spawn",
@@ -184,72 +204,63 @@ func (gs *GameServer) worker(zone *Zone) {
 
 // getActiveZones calculates the 4 active zones for a player based on position and neighbors
 func (gs *GameServer) getActiveZones(player *Player) ActiveZoneList {
-	currentZoneID := player.ZoneID
-	var currentZone *Zone
-	for _, zone := range gs.Zones {
-		if zone.ID == currentZoneID {
-			currentZone = zone
-			break
-		}
-	}
-	if currentZone == nil {
-		log.Printf("Warning: Current zone %d not found for player %s", currentZoneID, player.ID)
-		return ActiveZoneList{CurrentZoneID: currentZoneID, XAxisZoneID: 0, YAxisZoneID: 0, DiagonalZoneID: 0}
+	// store players current zone ID
+	playerCurrentZoneID := player.ZoneID
+	playerCurrentZone := gs.Zones[playerCurrentZoneID] // Previously: looped through gs.Zones to find the zone
+	if playerCurrentZone == nil {
+		log.Printf("Warning: Current zone %d not found for player %s", playerCurrentZoneID, player.ID)
+		return ActiveZoneList{CurrentZoneID: playerCurrentZoneID, XAxisZoneID: 0, YAxisZoneID: 0, DiagonalZoneID: 0}
 	}
 
 	// Find the config for the current zone
-	var currentConfig ZoneConfig
-	for _, config := range World.Zones {
-		if config.ID == currentZoneID {
-			currentConfig = config
+	var currentZoneConfig ZoneConfig
+	for _, zoneConfig := range World.ZoneConfigs {
+		if zoneConfig.ID == playerCurrentZoneID {
+			currentZoneConfig = zoneConfig
 			break
 		}
 	}
 
-	// Convert player coordinates to zone-local coordinates (0 to 8191)
 	localX := int(player.X) % ZoneWidthPixels
 	localY := int(player.Y) % ZoneHeightPixels
 
-	// Determine nearest x-axis and y-axis neighbors
 	var xAxisZoneID, yAxisZoneID int
-	// Check east/west based on x position within zone
 	if localX > ZoneWidthPixels/2 {
-		xAxisZoneID = currentConfig.Neighbors[2] // East
+		xAxisZoneID = currentZoneConfig.Neighbors[2]
 	} else {
-		xAxisZoneID = currentConfig.Neighbors[6] // West
+		xAxisZoneID = currentZoneConfig.Neighbors[6]
 	}
 	if localY > ZoneHeightPixels/2 {
-		yAxisZoneID = currentConfig.Neighbors[4] // South
+		yAxisZoneID = currentZoneConfig.Neighbors[4]
 	} else {
-		yAxisZoneID = currentConfig.Neighbors[0] // North
+		yAxisZoneID = currentZoneConfig.Neighbors[0]
 	}
 
-	// Determine nearest diagonal neighbor
 	adjacentDiagonals := []struct {
 		zoneID    int
 		centerX   float32
 		centerY   float32
-		direction int // Index into Neighbors array
+		direction int
 	}{
-		{currentConfig.Neighbors[7], 0, 0, 7}, // Northwest
-		{currentConfig.Neighbors[1], 0, 0, 1}, // Northeast
-		{currentConfig.Neighbors[3], 0, 0, 3}, // Southeast
-		{currentConfig.Neighbors[5], 0, 0, 5}, // Southwest
+		{currentZoneConfig.Neighbors[7], 0, 0, 7},
+		{currentZoneConfig.Neighbors[1], 0, 0, 1},
+		{currentZoneConfig.Neighbors[3], 0, 0, 3},
+		{currentZoneConfig.Neighbors[5], 0, 0, 5},
 	}
 
-	// Update center positions based on actual zone positions from zonePositions
+	// Update center positions using the map
 	for i := range adjacentDiagonals {
 		if adjacentDiagonals[i].zoneID == 0 {
 			continue
 		}
-		pos, exists := zonePositions[adjacentDiagonals[i].zoneID]
-		if !exists {
-			log.Printf("Warning: Grid position for neighbor zone %d not found", adjacentDiagonals[i].zoneID)
-			adjacentDiagonals[i].zoneID = 0 // Skip this neighbor
+		pos := gs.Zones[adjacentDiagonals[i].zoneID] // Access via map
+		if pos == nil {
+			log.Printf("Warning: Neighbor zone %d not found", adjacentDiagonals[i].zoneID)
+			adjacentDiagonals[i].zoneID = 0
 			continue
 		}
-		adjacentDiagonals[i].centerX = float32(pos.GridX*ZoneWidthPixels + ZoneWidthPixels/2)
-		adjacentDiagonals[i].centerY = float32(pos.GridY*ZoneHeightPixels + ZoneHeightPixels/2)
+		adjacentDiagonals[i].centerX = pos.WorldX + float32(ZoneWidthPixels/2)
+		adjacentDiagonals[i].centerY = pos.WorldY + float32(ZoneHeightPixels/2)
 	}
 
 	minDistance := float32(math.Inf(1))
@@ -269,9 +280,8 @@ func (gs *GameServer) getActiveZones(player *Player) ActiveZoneList {
 		}
 	}
 
-	// Fallback to a valid neighbor if no diagonal found
 	if diagonalZoneID == 0 && minDistance == float32(math.Inf(1)) {
-		for _, neighbor := range currentConfig.Neighbors {
+		for _, neighbor := range currentZoneConfig.Neighbors {
 			if neighbor != 0 {
 				diagonalZoneID = neighbor
 				break
@@ -280,7 +290,7 @@ func (gs *GameServer) getActiveZones(player *Player) ActiveZoneList {
 	}
 
 	return ActiveZoneList{
-		CurrentZoneID:  currentZoneID,
+		CurrentZoneID:  playerCurrentZoneID,
 		XAxisZoneID:    xAxisZoneID,
 		YAxisZoneID:    yAxisZoneID,
 		DiagonalZoneID: diagonalZoneID,
@@ -335,7 +345,10 @@ func (gs *GameServer) processZone(zone *Zone) {
 		player.X += player.VX * dt
 		player.Y += player.VY * dt
 		newZoneID := gs.calculateZoneID(player.X, player.Y, player)
-		if newZoneID != player.ZoneID {
+		if newZoneID == 0 || player.X < 0 || player.Y < 0 {
+			player.X -= player.VX * dt
+			player.Y -= player.VY * dt
+		} else if newZoneID != player.ZoneID {
 			gs.switchZone(player, zone, newZoneID)
 			continue
 		}
@@ -346,7 +359,6 @@ func (gs *GameServer) processZone(zone *Zone) {
 	// Prepare and send updates for each player in this zone
 	for _, player := range zone.Players {
 		activeZones := gs.getActiveZones(player)
-		// log.Printf("Active zones for player %s: %+v", player.ID, activeZones)
 
 		var allPlayerUpdates []PlayerUpdate
 		var allEnemyUpdates []EnemyUpdate
@@ -407,28 +419,6 @@ func (gs *GameServer) processZone(zone *Zone) {
 	}
 }
 
-// func clampToZone(e *Enemy, gs *GameServer) {
-// 	zoneId := e.ZoneID
-// 	minX := gs.Zones[zoneId].X
-// 	minY := gs.Zones[zoneId].Y
-// 	maxX := minX + ZoneWidthPixels
-// 	maxY := minY + ZoneWidthPixels
-
-// 	e.X = clamp(e.X, float32(minX), float32(maxX))
-// 	e.Y = clamp(e.Y, float32(minY), float32(maxY))
-// }
-
-// // clamp restricts a value to a range
-// func clamp(val, min, max float32) float32 {
-// 	if val < min {
-// 		return min
-// 	}
-// 	if val > max {
-// 		return max
-// 	}
-// 	return val
-// }
-
 func (gs *GameServer) calculateZoneID(x, y float32, player *Player) int {
 	// Convert to grid coordinates
 	gridX := int(x) / (World.ZoneSize * World.TileSize)
@@ -443,15 +433,16 @@ func (gs *GameServer) calculateZoneID(x, y float32, player *Player) int {
 	if zoneID == 0 {
 		// If the current grid position is empty, check neighbors of the player's current zone
 		if player != nil {
-			currentPlayerZone := gs.findPlayerZone(player.ID)
+			currentPlayerZone := gs.getZoneByPlayerID(player.ID)
 			if currentPlayerZone != nil {
-				currentConfig := World.Zones[currentPlayerZone.ID-1] // Adjust index since IDs start at 1
+				currentConfig := World.ZoneConfigs[currentPlayerZone.ID-1] // Adjust index since IDs start at 1
 				for _, neighborID := range currentConfig.Neighbors {
 					if neighborID != 0 {
-						pos, exists := zonePositions[neighborID]
-						if !exists {
-							continue
-						}
+						// pos, exists := zonePositions[neighborID]
+						// if !exists {
+						// 	continue
+						// }
+						pos := World.ZoneConfigs[neighborID]
 						minX := float32(pos.GridX * ZoneWidthPixels)
 						maxX := minX + float32(ZoneWidthPixels)
 						minY := float32(pos.GridY * ZoneHeightPixels)
@@ -468,15 +459,6 @@ func (gs *GameServer) calculateZoneID(x, y float32, player *Player) int {
 	return zoneID
 }
 
-func (gs *GameServer) getZoneByID(zoneId int) *Zone {
-	for _, zone := range gs.Zones {
-		if zone.ID == zoneId {
-			return zone
-		}
-	}
-	return nil
-}
-
 // switchZone transfers a player
 func (gs *GameServer) switchZone(player *Player, oldZone *Zone, newZoneID int) {
 	log.Println("deleting ", player.ID, " from zone ", oldZone.ID)
@@ -485,21 +467,30 @@ func (gs *GameServer) switchZone(player *Player, oldZone *Zone, newZoneID int) {
 	log.Println("set to new zone: ", player.ZoneID)
 	player.VX = 0
 	player.VY = 0
-	newZone := gs.getZoneByID(newZoneID)
+	newZone := gs.Zones[newZoneID]
 	// newZone := gs.Zones[newZoneID]
 	newZone.Players[player.ID] = player
 	log.Printf("Player %s switched from Zone %d (%d,%d) to Zone %d (%d,%d)",
-		player.ID, oldZone.ID, oldZone.X, oldZone.Y, newZone.ID, newZone.X, newZone.Y)
+		player.ID, oldZone.ID, oldZone.GridX, oldZone.GridY, newZone.ID, newZone.GridX, newZone.GridY)
 }
 
-// findPlayerZone finds the current zone of a player
-func (gs *GameServer) findPlayerZone(playerID string) *Zone {
-	for _, zone := range gs.Zones {
+// getZoneByPlayerID finds the current zone of a player
+func (gs *GameServer) getZoneByPlayerID(playerID string) *Zone {
+	for _, zone := range gs.Zones { // Iterate over map values
 		if _, exists := zone.Players[playerID]; exists {
 			return zone
 		}
 	}
 	return nil
+}
+
+func getZoneConfigByZoneID(zoneId int) (ZoneConfig, error) {
+	for _, zoneConfig := range World.ZoneConfigs {
+		if zoneConfig.ID == zoneId {
+			return zoneConfig, nil
+		}
+	}
+	return ZoneConfig{}, fmt.Errorf("ZoneConfig not found for zoneId: %d", zoneId)
 }
 
 // handleWebSocket handles client connections
@@ -522,40 +513,68 @@ func (gs *GameServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		Conn:   conn,
 	}
 	player.ZoneID = gs.calculateZoneID(float32(startX), float32(startY), player)
-	log.Println("zone ID: ", player.ZoneID)
-	initialZone := gs.getZoneByID(player.ZoneID)
+	// log.Println("zone ID: ", player.ZoneID)
+	initialZone := gs.Zones[player.ZoneID]
+	if initialZone == nil {
+		log.Printf("Error: Initial zone %d not found for player %s", player.ZoneID, playerID)
+		return
+	}
 	initialZone.Players[playerID] = player
-	log.Printf("Player %s spawned in Zone %d (%d,%d)", playerID, initialZone.ID, initialZone.X, initialZone.Y)
+	log.Printf("Player %s spawned in Zone %d (%d,%d)", playerID, initialZone.ID, initialZone.GridX, initialZone.GridY)
 
+	// Prepare welcome message with world zones
+	zonesInfo := make([]ZoneInfo, 0, len(gs.Zones))
+	for _, z := range gs.Zones { // Iterate over map values
+		var config ZoneConfig
+		for _, c := range World.ZoneConfigs {
+			if c.ID == z.ID {
+				config = c
+				break
+			}
+		}
+		zonesInfo = append(zonesInfo, ZoneInfo{
+			ID:         z.ID,
+			TilemapRef: config.TilemapRef,
+			WorldX:     config.WorldX,
+			WorldY:     config.WorldY,
+		})
+	}
+
+	// Send batched messages as a single array
+	batch := []Message{
+		{Type: "welcome", Data: map[string]interface{}{
+			"zones": zonesInfo,
+		}},
+	}
+	if err := player.Conn.WriteJSON(batch); err != nil {
+		log.Printf("Error sending welcome message to %s: %v", player.ID, err)
+	}
+
+	// Rest of the function remains the same until cleanup
 	for {
 		var msg Message
 		if err := conn.ReadJSON(&msg); err != nil {
 			log.Printf("Error reading from %s: %v", playerID, err)
 			break
 		}
-		// Route input to the player's current zone
-		currentZone := gs.findPlayerZone(playerID)
+		currentZone := gs.getZoneByPlayerID(playerID)
 		if currentZone != nil {
 			select {
 			case currentZone.Inbound <- msg:
-				// Successfully sent to current zone
 			default:
 				log.Printf("Inbound channel full for Zone %d, dropping input for %s", currentZone.ID, playerID)
 			}
 		} else {
-			// Player not found (e.g., disconnected or not yet spawned), use initial zone as fallback
-			log.Printf("Player %s not found in any zone, sending to initial Zone 0", playerID)
+			log.Printf("Player %s not found in any zone, sending to initial Zone %d", playerID, initialZone.ID)
 			select {
 			case initialZone.Inbound <- msg:
-				// Sent to initial zone
 			default:
-				log.Printf("Inbound channel full for initial Zone 0, dropping input for %s", playerID)
+				log.Printf("Inbound channel full for initial Zone %d, dropping input for %s", initialZone.ID, playerID)
 			}
 		}
 	}
 
-	// Cleanup on disconnect
-	currentZone := gs.findPlayerZone(playerID)
+	currentZone := gs.getZoneByPlayerID(playerID)
 	if currentZone != nil {
 		delete(currentZone.Players, playerID)
 	} else {

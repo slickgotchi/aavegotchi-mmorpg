@@ -57,6 +57,14 @@ export interface PoolManager {
     }
 }
 
+export interface TilemapZone {
+    tilemapRef: string;
+    zoneId: number;
+    worldX: number;
+    worldY: number;
+    tilemap: Phaser.Tilemaps.Tilemap;
+}
+
 export interface ActiveZoneList {
     currentZoneId: number;
     xAxisZoneId: number;
@@ -64,7 +72,7 @@ export interface ActiveZoneList {
     diagonalZoneId: number;
 }
 
-let player, zones, ws;
+// let player, zones, ws;
 const tileSize = 32;
 const zoneSize = 256; // 8192px
 // const scale = 1 / 32; //
@@ -87,6 +95,8 @@ export class GameScene extends Phaser.Scene {
     private rezoneBatchCounter = 0;
     private rezoneBatchLimit = 100;
 
+    private tilemapZones: { [id: string] : TilemapZone } = {};
+
     private pools!: PoolManager;
 
     private enemies: {[id:string]: Enemy} = {}
@@ -100,7 +110,9 @@ export class GameScene extends Phaser.Scene {
 
     preload() {
         this.load.image('tileset', 'assets/tilemap/tileset.png');
-        this.load.tilemapTiledJSON('map', 'assets/tilemap/mmorpg.json');
+        this.load.tilemapTiledJSON('mmorpg', 'assets/tilemap/mmorpg.json');
+        this.load.tilemapTiledJSON('default', 'assets/tilemap/default.json');
+        // this.load.tilemapTiledJSON('default_zone', 'assets/tilemap/default.json');
         // this.load.image('enemy-easy', '/assets/enemy-easy.png');
         // this.load.image('enemy-medium', '/assets/enemy-medium.png');
         // this.load.image('enemy-hard', '/assets/enemy-hard.png');
@@ -123,21 +135,21 @@ export class GameScene extends Phaser.Scene {
         };
 
         // Draw 3x3 grid of zones with alternating colors
-        zones = this.add.group();
-        for (let y = 0; y < 5; y++) {
-            for (let x = 0; x < 5; x++) {
-                const color = (x + y) % 2 === 0 ? 0xff0000 : 0x00ff00; // Red/Green
-                const rect = this.add.rectangle(
-                    (x * zoneSize + zoneSize / 2) * tileSize,
-                    (y * zoneSize + zoneSize / 2) * tileSize,
-                    zoneSize*tileSize,
-                    zoneSize*tileSize,
-                    color
-                );
-                rect.setOrigin(0.5);
-                zones.add(rect);
-            }
-        }
+        // zones = this.add.group();
+        // for (let y = 0; y < 5; y++) {
+        //     for (let x = 0; x < 5; x++) {
+        //         const color = (x + y) % 2 === 0 ? 0xff0000 : 0x00ff00; // Red/Green
+        //         const rect = this.add.rectangle(
+        //             (x * zoneSize + zoneSize / 2) * tileSize,
+        //             (y * zoneSize + zoneSize / 2) * tileSize,
+        //             zoneSize*tileSize,
+        //             zoneSize*tileSize,
+        //             color
+        //         );
+        //         rect.setOrigin(0.5);
+        //         zones.add(rect);
+        //     }
+        // }
 
         this.activeZoneList = {
             currentZoneId: -1000,
@@ -202,6 +214,9 @@ export class GameScene extends Phaser.Scene {
                 messages.forEach((msg:any) => {
                     // console.log("Message");
                     switch (msg.type){
+                        case 'welcome':
+                            this.handleWelcome(msg.data);
+                        break;
                         case 'activeZones':
                             this.handleActiveZoneList(msg.data);
                             break;
@@ -242,8 +257,19 @@ export class GameScene extends Phaser.Scene {
 
     }
 
+    handleWelcome(datum: any) {
+        console.log(datum);
+        const { zones } = datum;
+        zones.forEach((zone: any) => {
+            const {id, tilemapRef, worldX, worldY } = zone;
+            console.log(zone);
+            this.createTilemapZone(id, tilemapRef, worldX, worldY);
+        });
+    }
+
     handleActiveZoneList(datum: any){
         const {currentZoneId, xAxisZoneId, yAxisZoneId, diagonalZoneId } = datum;
+        console.log(datum);
 
         if (!this.activeZoneList) return;
 
@@ -813,8 +839,12 @@ export class GameScene extends Phaser.Scene {
         });
     }
 
-    createTilemap() {
-        const map = this.make.tilemap({ key: 'map' });
+    createTilemapZone(zoneId: number, tilemapRef: string, worldX: number, worldY: number) {
+        // ignore null/0 zone
+        if (zoneId === 0 || tilemapRef === "" || tilemapRef === "nil" || 
+            tilemapRef === "null") return;
+        
+        const map = this.make.tilemap({ key: tilemapRef });
         if (!map) {
             console.error('Tilemap failed to load');
             return;
@@ -836,17 +866,20 @@ export class GameScene extends Phaser.Scene {
     
             if (isHidden || isEnemyLayer) return;
     
-            const layer = map.createLayer(layerName, tileset, 0, 0);
+            const layer = map.createLayer(layerName, tileset, worldX, worldY);
             if (layer) {
                 layer.setDepth(index);
                 layer.setVisible(true);
             }
         });
-    
-        const centerX = map.widthInPixels / 2;
-        const centerY = map.heightInPixels / 2;
-        // const initialCameraFollow = this.add.rectangle(centerX, centerY, 20, 20, 0xff0000).setOrigin(0.5, 0.5).setAlpha(0);
-        // this.cameras.main.startFollow(initialCameraFollow);
+
+        this.tilemapZones[zoneId] = {
+            zoneId: zoneId,
+            tilemapRef: tilemapRef,
+            worldX: worldX,
+            worldY: worldY,
+            tilemap: map,
+        }
     }
 
     onGotchiSelected(gotchi: Aavegotchi) {
@@ -1063,7 +1096,7 @@ export class GameScene extends Phaser.Scene {
 
         this.scale.resize(newWidth, newHeight);
         const zoom = Math.min(newWidth / GAME_WIDTH, newHeight / GAME_HEIGHT);
-        this.cameras.main.setZoom(zoom / 20);
+        this.cameras.main.setZoom(zoom / 7);
 
         const canvas = this.game.canvas;
         canvas.style.position = 'absolute';
