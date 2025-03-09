@@ -52,10 +52,10 @@ type Player struct {
 	AttackRadius            float32
 	GameXP                  int
 	GameLevel               int
-	OnchainXP               int
-	OnchainLevel            int
 	GameXPOnCurrentLevel    int
 	GameXPTotalForNextLevel int
+	OnchainXP               int
+	OnchainLevel            int
 	LastUpdate              int64 // For velocity tracking
 	ZoneID                  int   // Track player's zone
 	ConnMu                  sync.Mutex

@@ -24,6 +24,7 @@ export function PlayerStatsBars({ gameRef, gameDimensions }: PlayerStatsBarsProp
                 if (gameScene && gameScene.getPlayers && gameScene.getLocalPlayerID) {
                     const players = gameScene.getPlayers();
                     const localPlayerId = gameScene.getLocalPlayerID();
+                    console.log(players, localPlayerId, players[localPlayerId])
                     if (players && localPlayerId && players[localPlayerId]) {
                         // Create a new object to ensure React detects the change
                         const newStats = { ...players[localPlayerId] };
@@ -96,15 +97,40 @@ export function PlayerStatsBars({ gameRef, gameDimensions }: PlayerStatsBarsProp
                         left: '0px',
                     }}
                 />
+
                 {/* HP Bar */}
                 <div
                     style={{
                         position: 'absolute',
                         width: `${hpFillBarWidth * (playerStats.hp / playerStats.maxHp)}px`,
                         height: `${fillBarHeight}px`,
-                        backgroundColor: '#38b764',
+                        backgroundColor: '#5ac54f',
                         transition: 'width 0.2s',
                         top: barPadding,
+                        left: barPadding,
+                    }}
+                />
+                {/* HP Bar Highlight */}
+                <div
+                    style={{
+                        position: 'absolute',
+                        width: `${hpFillBarWidth * (playerStats.hp / playerStats.maxHp)}px`,
+                        height: `${fillBarHeight*.1}px`,
+                        backgroundColor: '#99e65f',
+                        transition: 'width 0.2s',
+                        top: barPadding,
+                        left: barPadding,
+                    }}
+                />
+                {/* HP Bar Lowlight */}
+                <div
+                    style={{
+                        position: 'absolute',
+                        width: `${hpFillBarWidth * (playerStats.hp / playerStats.maxHp)}px`,
+                        height: `${fillBarHeight*.1}px`,
+                        backgroundColor: '#33984b',
+                        transition: 'width 0.2s',
+                        bottom: barPadding,
                         left: barPadding,
                     }}
                 />
@@ -156,9 +182,33 @@ export function PlayerStatsBars({ gameRef, gameDimensions }: PlayerStatsBarsProp
                         position: 'absolute',
                         width: `${apFillBarWidth * (playerStats.ap / playerStats.maxAp)}px`,
                         height: `${fillBarHeight}px`,
-                        backgroundColor: '#41a6f6',
+                        backgroundColor: '#0098dc',
                         transition: 'width 0.2s',
                         top: barPadding,
+                        left: barPadding,
+                    }}
+                />
+                {/* AP Bar Highlght */}
+                <div
+                    style={{
+                        position: 'absolute',
+                        width: `${apFillBarWidth * (playerStats.ap / playerStats.maxAp)}px`,
+                        height: `${fillBarHeight*.1}px`,
+                        backgroundColor: '#00cdf9',
+                        transition: 'width 0.2s',
+                        top: barPadding,
+                        left: barPadding,
+                    }}
+                />
+                {/* AP Bar Lowlight */}
+                <div
+                    style={{
+                        position: 'absolute',
+                        width: `${apFillBarWidth * (playerStats.ap / playerStats.maxAp)}px`,
+                        height: `${fillBarHeight*.1}px`,
+                        backgroundColor: '#0069aa',
+                        transition: 'width 0.2s',
+                        bottom: barPadding,
                         left: barPadding,
                     }}
                 />

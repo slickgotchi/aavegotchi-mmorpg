@@ -122,14 +122,36 @@ export function PlayerXPStatsHUD({ gameRef, levelUpData, gameDimensions }: Playe
 
                     }}
                 />
-                {/* Fill Bar */}
+                {/* Number Box */}
                 <div
                     style={{
                         position: 'absolute',
                         width: `${levelFillBarWidth}px`,
                         height: `${levelFillBarHeight}px`,
-                        backgroundColor: '#ffcd75',
+                        backgroundColor: '#ffc825',
                         top: barPadding,
+                        left: barPadding,
+                    }}
+                />
+                {/* Number Box Highlight*/}
+                <div
+                    style={{
+                        position: 'absolute',
+                        width: `${levelFillBarWidth}px`,
+                        height: `${levelFillBarHeight*.1}px`,
+                        backgroundColor: '#ffeb57',
+                        top: barPadding,
+                        left: barPadding,
+                    }}
+                />
+                {/* Number Box Lowlight*/}
+                <div
+                    style={{
+                        position: 'absolute',
+                        width: `${levelFillBarWidth}px`,
+                        height: `${levelFillBarHeight*.1}px`,
+                        backgroundColor: '#ffa214',
+                        bottom: barPadding,
                         left: barPadding,
                     }}
                 />
@@ -190,9 +212,33 @@ export function PlayerXPStatsHUD({ gameRef, levelUpData, gameDimensions }: Playe
                         position: 'absolute',
                         width: `${xpFillBarWidth * (playerXPStats.gameXpOnCurrentLevel / playerXPStats.gameXpTotalForNextLevel)}px`,
                         height: `${xpFillBarHeight}px`,
-                        backgroundColor: '#ffcd75',
+                        backgroundColor: '#ffc825',
                         transition: 'width 0.2s',
                         top: barPadding,
+                        left: barPadding,
+                    }}
+                />
+                {/* XP fill Bar Highlight */}
+                <div
+                    style={{
+                        position: 'absolute',
+                        width: `${xpFillBarWidth * (playerXPStats.gameXpOnCurrentLevel / playerXPStats.gameXpTotalForNextLevel)}px`,
+                        height: `${xpFillBarHeight*.1}px`,
+                        backgroundColor: '#ffeb57',
+                        transition: 'width 0.2s',
+                        top: barPadding,
+                        left: barPadding,
+                    }}
+                />
+                {/* XP fill Bar Lowlight */}
+                <div
+                    style={{
+                        position: 'absolute',
+                        width: `${xpFillBarWidth * (playerXPStats.gameXpOnCurrentLevel / playerXPStats.gameXpTotalForNextLevel)}px`,
+                        height: `${xpFillBarHeight*.1}px`,
+                        backgroundColor: '#ffa214',
+                        transition: 'width 0.2s',
+                        bottom: barPadding,
                         left: barPadding,
                     }}
                 />

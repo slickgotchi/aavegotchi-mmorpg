@@ -20,8 +20,25 @@ const (
 	ZoneWidthPixels   = 256 * 32 // Tiles
 	ZoneHeightPixels  = 256 * 32 // Tiles
 	TileSize          = 32       // Pixels
-	NumEnemiesPerZone = 100
+	NumEnemiesPerZone = 1000
+	PlayerMoveSpeed   = 20 * 32
 )
+
+// xp consts
+const (
+	MAX_LEVEL         = 50
+	BASE_XP_PER_LEVEL = 100
+	XP_GROWTH_FACTOR  = 1.5
+)
+
+var totalXpRequiredForLevel = make([]int, MAX_LEVEL+1)
+
+// init runs and calcs xp requirements straight away
+func init() {
+	for level := 1; level <= MAX_LEVEL; level++ {
+		totalXpRequiredForLevel[level] = int(float64(BASE_XP_PER_LEVEL) * math.Pow(float64(level-1), XP_GROWTH_FACTOR))
+	}
+}
 
 // Message is a generic struct for client/server communication
 type Message struct {
@@ -62,6 +79,19 @@ type Player struct {
 	X, Y   float32 // Tile coordinates
 	VX, VY float32 // Tiles per second
 	Conn   *websocket.Conn
+
+	// game stats
+	MaxHP int
+	HP    int
+	MaxAP int
+	AP    int
+	ATK   int
+
+	// game xp
+	GameXP                  int
+	GameLevel               int
+	GameXPOnCurrentLevel    int
+	GameXPTotalForNextLevel int
 }
 
 // Enemy represents an enemy entity
@@ -74,7 +104,10 @@ type Enemy struct {
 
 	Type      string
 	Direction int
-	HP        int
+
+	// game stats
+	HP  int
+	ATK int
 }
 
 // GameServer holds the overall state
@@ -89,6 +122,17 @@ type PlayerUpdate struct {
 	Y         float32 `json:"y"`
 	ZoneID    int     `json:"zoneId"`
 	Timestamp int64   `json:"timestamp"`
+
+	// game stats
+	MaxHP int `json:"maxHp"`
+	HP    int `json:"hp"`
+	MaxAP int `json:"maxAp"`
+	AP    int `json:"ap"`
+
+	GameXP                  int `json:"gameXp"`
+	GameLevel               int `json:"gameLevel"`
+	GameXPOnCurrentLevel    int `json:"gameXpOnCurrentLevel"`
+	GameXPTotalForNextLevel int `json:"gameXpTotalForNextLevel"`
 }
 
 // EnemyUpdate represents enemy data sent to clients
@@ -101,7 +145,8 @@ type EnemyUpdate struct {
 
 	Type      string `json:"type"`
 	Direction int    `json:"int"`
-	HP        int    `json:"hp"`
+
+	HP int `json:"hp"`
 }
 
 // ActiveZoneList represents the list of 4 active zones
@@ -331,7 +376,7 @@ func (gs *GameServer) processZone(zone *Zone) {
 
 			player.VX = 0
 			player.VY = 0
-			speed := float32(100 * TileSize)
+			speed := float32(PlayerMoveSpeed)
 			if w, ok := keys["W"].(bool); ok && w {
 				player.VY = -speed
 			}
@@ -347,29 +392,6 @@ func (gs *GameServer) processZone(zone *Zone) {
 			if space, ok := keys["SPACE"].(bool); ok && space {
 				log.Printf("Player %s pressed SPACE in Zone %d", playerID, zone.ID)
 			}
-
-			// if data, ok := msg.Data.(map[string]interface{}); ok {
-			// 	if keys, ok := data["keys"].(map[string]interface{}); ok {
-			// 		player.VX = 0
-			// 		player.VY = 0
-			// 		speed := float32(100 * TileSize) // 100 tiles/sec
-			// 		if w, ok := keys["W"].(bool); ok && w {
-			// 			player.VY = -speed
-			// 		}
-			// 		if s, ok := keys["S"].(bool); ok && s {
-			// 			player.VY = speed
-			// 		}
-			// 		if a, ok := keys["A"].(bool); ok && a {
-			// 			player.VX = -speed
-			// 		}
-			// 		if d, ok := keys["D"].(bool); ok && d {
-			// 			player.VX = speed
-			// 		}
-			// 		if space, ok := keys["SPACE"].(bool); ok && space {
-			// 			log.Printf("Player %s pressed SPACE in Zone %d", playerID, zone.ID)
-			// 		}
-			// 	}
-			// }
 		default:
 			log.Printf("Unhandled message type in Zone %d: %s", zone.ID, msg.Type)
 		}
@@ -387,7 +409,36 @@ func (gs *GameServer) processZone(zone *Zone) {
 			player.X -= player.VX * dt
 			player.Y -= player.VY * dt
 		} else if newZoneID != player.ZoneID {
+			var lastZoneUpdates []PlayerUpdate
+			// we need to do a movement message from this zone before deleting
+			lastZoneUpdates = append(lastZoneUpdates, PlayerUpdate{
+				PlayerID:  player.ID,
+				X:         player.X,
+				Y:         player.Y,
+				ZoneID:    player.ZoneID,
+				Timestamp: time.Now().UnixMilli(),
+
+				MaxHP: player.MaxHP,
+				HP:    player.HP,
+				MaxAP: player.MaxAP,
+				AP:    player.AP,
+
+				GameXP:                  player.GameXP,
+				GameLevel:               player.GameLevel,
+				GameXPOnCurrentLevel:    player.GameXPOnCurrentLevel,
+				GameXPTotalForNextLevel: player.GameXPTotalForNextLevel,
+			})
+
+			batch := []Message{
+				{Type: "playerUpdates", Data: lastZoneUpdates},
+			}
+			if err := player.Conn.WriteJSON(batch); err != nil {
+				log.Printf("Error sending batch to %s: %v", player.ID, err)
+			}
+
+			// now switch zone
 			gs.switchZone(player, zone, newZoneID)
+
 			continue
 		}
 	}
@@ -428,7 +479,20 @@ func (gs *GameServer) processZone(zone *Zone) {
 					Y:         p.Y,
 					ZoneID:    p.ZoneID,
 					Timestamp: timestamp,
+
+					// game stats
+					MaxHP: p.MaxHP,
+					HP:    p.HP,
+					MaxAP: p.MaxAP,
+					AP:    p.AP,
+
+					// xp
+					GameXP:                  p.GameXP,
+					GameLevel:               p.GameLevel,
+					GameXPOnCurrentLevel:    p.GameXPOnCurrentLevel,
+					GameXPTotalForNextLevel: p.GameXPTotalForNextLevel,
 				})
+				log.Printf("Player pos x: %f, y: %f, timestamp: %d", p.X, p.Y, timestamp)
 			}
 			for _, e := range targetZone.Enemies {
 				allEnemyUpdates = append(allEnemyUpdates, EnemyUpdate{
@@ -439,7 +503,9 @@ func (gs *GameServer) processZone(zone *Zone) {
 					Timestamp: timestamp,
 					Type:      e.Type,
 					Direction: e.Direction,
-					HP:        e.HP,
+
+					// game stats
+					HP: e.HP,
 				})
 			}
 			targetZone.mu.Unlock()
@@ -476,10 +542,6 @@ func (gs *GameServer) calculateZoneID(x, y float32, player *Player) int {
 				currentConfig := World.ZoneConfigs[currentPlayerZone.ID-1] // Adjust index since IDs start at 1
 				for _, neighborID := range currentConfig.Neighbors {
 					if neighborID != 0 {
-						// pos, exists := zonePositions[neighborID]
-						// if !exists {
-						// 	continue
-						// }
 						pos := World.ZoneConfigs[neighborID]
 						minX := float32(pos.GridX * ZoneWidthPixels)
 						maxX := minX + float32(ZoneWidthPixels)
@@ -499,12 +561,10 @@ func (gs *GameServer) calculateZoneID(x, y float32, player *Player) int {
 
 // switchZone transfers a player
 func (gs *GameServer) switchZone(player *Player, oldZone *Zone, newZoneID int) {
-	log.Println("deleting ", player.ID, " from zone ", oldZone.ID)
+	log.Println("Deleting ", player.ID, " from zone ", oldZone.ID)
 	delete(oldZone.Players, player.ID)
 	player.ZoneID = newZoneID
-	log.Println("set to new zone: ", player.ZoneID)
-	player.VX = 0
-	player.VY = 0
+	log.Println("Set to new zone: ", player.ZoneID)
 	newZone := gs.Zones[newZoneID]
 	// newZone := gs.Zones[newZoneID]
 	newZone.Players[player.ID] = player
@@ -540,6 +600,7 @@ func (gs *GameServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
+	// CREATE PLAYER
 	playerID := fmt.Sprintf("player%d", time.Now().UnixNano())
 	startX := 1.5 * ZoneWidthPixels
 	startY := 1.5 * ZoneWidthPixels
@@ -549,9 +610,19 @@ func (gs *GameServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		X:      float32(startX), // Center of zone 0
 		Y:      float32(startY), // Center of zone 0
 		Conn:   conn,
+
+		MaxHP: 300,
+		HP:    300,
+		MaxAP: 150,
+		AP:    150,
+
+		GameXP:                  0,
+		GameLevel:               1,
+		GameXPOnCurrentLevel:    0,
+		GameXPTotalForNextLevel: totalXpRequiredForLevel[2],
 	}
 	player.ZoneID = gs.calculateZoneID(float32(startX), float32(startY), player)
-	// log.Println("zone ID: ", player.ZoneID)
+
 	initialZone := gs.Zones[player.ZoneID]
 	if initialZone == nil {
 		log.Printf("Error: Initial zone %d not found for player %s", player.ZoneID, playerID)
