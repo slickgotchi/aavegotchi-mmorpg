@@ -19,7 +19,7 @@ export interface PositionUpdate {
 }
 
 export interface Player {
-    sprite: Phaser.GameObjects.Sprite;
+    bodySprite: Phaser.GameObjects.Sprite;
     gotchiId: number;
     isAssignedSVG: boolean;
     positionBuffer: PositionUpdate[];
@@ -29,6 +29,7 @@ export interface Player {
     ap: number;
     hp: number;
     maxAp: number;
+    previousHp: number;
 
     // xp
     gameXp: number;
@@ -56,6 +57,7 @@ export interface Enemy {
 
     maxHp: number;
     hp: number;
+    previousHp: number; // for tracking damage popups
 }
 
 export interface PoolManager {
@@ -487,7 +489,7 @@ export class GameScene extends Phaser.Scene {
                 .setScale(1)
 
             this.players[playerId] = {
-                sprite: newPlayerSprite,
+                bodySprite: newPlayerSprite,
                 gotchiId: 0,
                 isAssignedSVG: false,
                 positionBuffer: [],
@@ -497,6 +499,7 @@ export class GameScene extends Phaser.Scene {
                 hp: hp,
                 maxAp: maxAp,
                 ap: ap,
+                previousHp: hp,
 
                 // xp
                 gameXp: gameXp,
@@ -532,6 +535,14 @@ export class GameScene extends Phaser.Scene {
             player.gameXpOnCurrentLevel = gameXpOnCurrentLevel;
             player.gameXpTotalForNextLevel = gameXpTotalForNextLevel;
 
+            // check for damage update
+            if (player.hp < player.previousHp){
+                if (this.isPlayerOnScreen(player)){
+                    this.showDamageToPlayerPopupText(player.previousHp - player.hp, playerId);
+                }
+                player.previousHp = player.hp;
+            }
+
             // console.log(player, this.players[playerId]);
         }
 
@@ -539,9 +550,45 @@ export class GameScene extends Phaser.Scene {
         if (this.localPlayerID === playerId) {
             if (!this.followedPlayerID) {
                 this.followedPlayerID = this.localPlayerID;
-                this.cameras.main.startFollow(this.players[playerId].sprite, false, 0.1, 0.1)
+                this.cameras.main.startFollow(this.players[playerId].bodySprite, false, 0.1, 0.1)
             }
         }
+    }
+
+    // Check if an enemy is onscreen using the camera's worldView
+    isEnemyOnScreen(enemy: Enemy): boolean {
+        if (!enemy || !enemy.bodySprite) return false;
+
+        const camera = this.cameras.main;
+        const worldView = camera.worldView; // Rectangle representing the visible area
+
+        const x = enemy.bodySprite.x;
+        const y = enemy.bodySprite.y;
+
+        return (
+            x >= worldView.left &&
+            x <= worldView.right &&
+            y >= worldView.top &&
+            y <= worldView.bottom
+        );
+    }
+
+    // Check if an enemy is onscreen using the camera's worldView
+    isPlayerOnScreen(player: Player): boolean {
+        if (!player || !player.bodySprite) return false;
+
+        const camera = this.cameras.main;
+        const worldView = camera.worldView; // Rectangle representing the visible area
+
+        const x = player.bodySprite.x;
+        const y = player.bodySprite.y;
+
+        return (
+            x >= worldView.left &&
+            x <= worldView.right &&
+            y >= worldView.top &&
+            y <= worldView.bottom
+        );
     }
 
     deactivateAllEnemySprites() {
@@ -698,6 +745,7 @@ export class GameScene extends Phaser.Scene {
 
                     maxHp: maxHp,
                     hp: hp,
+                    previousHp: hp,
                 };
             }
         }
@@ -722,6 +770,14 @@ export class GameScene extends Phaser.Scene {
             if (data.direction !== undefined) {
                 enemy.direction = data.direction;
             }
+
+            // check for damage update
+            if (enemy.hp < enemy.previousHp) {
+                if (this.isEnemyOnScreen(enemy)) {
+                    this.showDamageToPlayerPopupText(enemy.previousHp - enemy.hp, enemyId);
+                } 
+                enemy.previousHp = enemy.hp;
+            }
         }
 
         // DEAD
@@ -734,6 +790,62 @@ export class GameScene extends Phaser.Scene {
             }
             delete this.enemies[enemyId];
         }
+    }
+
+    showDamageToPlayerPopupText(damageValue: number, playerId: string) {
+        var player = this.players[playerId];
+        if (!player) return;
+
+        const {x, y} = player.bodySprite;
+        const offsetY = 64;
+        const textColor = "red";
+
+        const damageText = this.getPooledText(x, y + offsetY, damageValue.toString());
+        damageText.setStyle({
+            fontFamily: 'Pixelar',
+            fontSize: '24px',
+            color: textColor,
+            stroke: '#000000',
+            strokeThickness: 1,
+        });
+        damageText.setOrigin(0.5, 0.5).setDepth(3000);
+
+        this.tweens.add({
+            targets: damageText,
+            y: damageText.y - 20,
+            alpha: 0,
+            duration: 1000,
+            ease: 'Quad.easeIn',
+            onComplete: () => damageText.setVisible(false),
+        });
+    }
+
+    showDamageToEnemyPopupText(damageValue: number, enemyId: string) {
+        var enemy = this.enemies[enemyId];
+        if (!enemy || !enemy.bodySprite) return;
+
+        const {x, y} = enemy.bodySprite;
+        const offsetY = 48;
+        const textColor = "white";
+
+        const damageText = this.getPooledText(x, y + offsetY, damageValue.toString());
+        damageText.setStyle({
+            fontFamily: 'Pixelar',
+            fontSize: '24px',
+            color: textColor,
+            stroke: '#000000',
+            strokeThickness: 1,
+        });
+        damageText.setOrigin(0.5, 0.5).setDepth(3000);
+
+        this.tweens.add({
+            targets: damageText,
+            y: damageText.y - 20,
+            alpha: 0,
+            duration: 1000,
+            ease: 'Quad.easeIn',
+            onComplete: () => damageText.setVisible(false),
+        });
     }
 
     // handleDamageUpdate(data: any) {
@@ -778,8 +890,8 @@ export class GameScene extends Phaser.Scene {
         const player = this.players[this.localPlayerID];
         if (!player) return;
 
-        const x = player.sprite.x;
-        const y = player.sprite.y;
+        const x = player.bodySprite.x;
+        const y = player.bodySprite.y;
         const textColor = '#ffffff';
         const offsetY = 128 + 64;
 
@@ -968,8 +1080,8 @@ export class GameScene extends Phaser.Scene {
 
             this.load.once('complete', () => {
                 if (this.players[playerID]) {
-                    this.players[playerID].sprite.destroy();
-                    this.players[playerID].sprite = this.add.sprite(x, y, `gotchi-${gotchiId}-front`)
+                    this.players[playerID].bodySprite.destroy();
+                    this.players[playerID].bodySprite = this.add.sprite(x, y, `gotchi-${gotchiId}-front`)
                         .setDepth(1000)
                         .setScale(0.5)
                         .setName(playerID);
@@ -984,7 +1096,7 @@ export class GameScene extends Phaser.Scene {
 
     removePlayer(id: string) {
         if (this.players[id]) {
-            this.players[id].sprite.destroy();
+            this.players[id].bodySprite.destroy();
             delete this.players[id];
         }
     }
@@ -1029,7 +1141,7 @@ export class GameScene extends Phaser.Scene {
             const buffer = player.positionBuffer;
 
             if (buffer.length < 2) {
-                player.sprite.setPosition(buffer[0].x, buffer[0].y);
+                player.bodySprite.setPosition(buffer[0].x, buffer[0].y);
                 continue;
             }
 
@@ -1046,11 +1158,11 @@ export class GameScene extends Phaser.Scene {
                 const alpha = (targetTime - older.timestamp) / (newer.timestamp - older.timestamp);
                 const interpX = older.x + (newer.x - older.x) * Math.min(1, Math.max(0, alpha));
                 const interpY = older.y + (newer.y - older.y) * Math.min(1, Math.max(0, alpha));
-                player.sprite.setPosition(interpX, interpY);
+                player.bodySprite.setPosition(interpX, interpY);
             } else if (buffer.length > 0) {
                 // Extrapolate if no newer position (using last known position)
                 const last = buffer[buffer.length - 1];
-                player.sprite.setPosition(last.x, last.y);
+                player.bodySprite.setPosition(last.x, last.y);
             }
         }
     }

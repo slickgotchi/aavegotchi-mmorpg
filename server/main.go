@@ -63,13 +63,10 @@ type Zone struct {
 
 // sent to client during welcome message
 type ZoneInfo struct {
-	ID         int    `json:"id"`
-	TilemapRef string `json:"tilemapRef"`
-	// GridX      int     `json:"gridX"`
-	// GridY      int     `json:"gridY"`
-	WorldX float32 `json:"worldX"`
-	WorldY float32 `json:"worldY"`
-	// Neighbors  [8]int  `json:"neighbors"`
+	ID         int     `json:"id"`
+	TilemapRef string  `json:"tilemapRef"`
+	WorldX     float32 `json:"worldX"`
+	WorldY     float32 `json:"worldY"`
 }
 
 // Player represents a player entity
