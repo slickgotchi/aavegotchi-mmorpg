@@ -106,8 +106,9 @@ type Enemy struct {
 	Direction int
 
 	// game stats
-	HP  int
-	ATK int
+	MaxHP int
+	HP    int
+	ATK   int
 }
 
 // GameServer holds the overall state
@@ -146,7 +147,8 @@ type EnemyUpdate struct {
 	Type      string `json:"type"`
 	Direction int    `json:"int"`
 
-	HP int `json:"hp"`
+	MaxHP int `json:"maxHp"`
+	HP    int `json:"hp"`
 }
 
 // ActiveZoneList represents the list of 4 active zones
@@ -222,7 +224,9 @@ func NewGameServer() *GameServer {
 				State:     "Spawn",
 				Type:      enemyType,
 				Direction: 0,
-				HP:        100,
+
+				MaxHP: 100,
+				HP:    100,
 			}
 			// log.Printf("New enemy %s in zone %d at x: %.2f, y: %.2f", enemyID, config.ID, gs.Zones[i].Enemies[enemyID].X, gs.Zones[i].Enemies[enemyID].Y)
 		}
@@ -505,7 +509,8 @@ func (gs *GameServer) processZone(zone *Zone) {
 					Direction: e.Direction,
 
 					// game stats
-					HP: e.HP,
+					MaxHP: e.MaxHP,
+					HP:    e.HP,
 				})
 			}
 			targetZone.mu.Unlock()

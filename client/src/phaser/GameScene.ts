@@ -45,22 +45,24 @@ export interface TilemapProperty {
 
 export interface Enemy {
     bodySprite: Phaser.GameObjects.Sprite | null;
-    shadowSprite?: Phaser.GameObjects.Sprite | null;
-    // hpBar?: Phaser.GameObjects.Rectangle;
-    // maxHp: number;
+    shadowSprite: Phaser.GameObjects.Sprite | null;
+    hpBar: Phaser.GameObjects.Rectangle | null;
+
     type: string;
     positionBuffer: PositionUpdate[];
-    hp: number;
     direction?: number;
     zoneId: number;
     hasPoolSprites: boolean;
+
+    maxHp: number;
+    hp: number;
 }
 
 export interface PoolManager {
     enemy: {
         body: Phaser.GameObjects.Group,
         shadow: Phaser.GameObjects.Group,
-        // statBar: Phaser.GameObjects.Group,
+        statBar: Phaser.GameObjects.Group,
     }
 }
 
@@ -183,12 +185,37 @@ export class GameScene extends Phaser.Scene {
         });
         enemyShadowPool.createMultiple({ key: 'enemies', quantity: MAX_CONCURRENT_ENEMIES, active: false, visible: false });
 
+        // Initialize rectangle pool
+        var enemyStatBarPool = this.add.group({
+            maxSize: MAX_CONCURRENT_ENEMIES,
+            classType: Phaser.GameObjects.Rectangle,
+            createCallback: (rectGameObject) => {
+                var rect = rectGameObject as Phaser.GameObjects.Rectangle;
+                rect.setSize(32, 8); // Set the rectangle size
+                rect.setFillStyle(0xff0000); // Red color
+                rect.setVisible(false); // Hidden until assigned
+                rect.setActive(false); // Inactive until assigned
+                rect.setDepth(500);
+                rect.setAlpha(1);
+            }
+        });
+
+        // Pre-create all rectangles
+        enemyStatBarPool.createMultiple({
+            key: '',
+            quantity: MAX_CONCURRENT_ENEMIES,
+            active: false,
+            visible: false
+        });
+
+
+
         // add all pools to the overall pool list
         this.pools = {
             enemy: {
                 body: enemyBodyPool,
                 shadow: enemyShadowPool,
-                // statBar: this.add.group(),
+                statBar: enemyStatBarPool,
             }
         }
 
@@ -527,13 +554,16 @@ export class GameScene extends Phaser.Scene {
                 if (enemy.bodySprite) {
                     this.pools.enemy.body.killAndHide(enemy.bodySprite);
                     enemy.bodySprite = null;
-                    enemy.hasPoolSprites = false;
                 }
                 if (enemy.shadowSprite) {
                     this.pools.enemy.shadow.killAndHide(enemy.shadowSprite);
                     enemy.shadowSprite = null;
-                    enemy.hasPoolSprites = false;
                 }
+                if (enemy.hpBar) {
+                    this.pools.enemy.statBar.killAndHide(enemy.hpBar);
+                    enemy.hpBar = null;
+                }
+                enemy.hasPoolSprites = false;
                 delete this.enemies[enemyId];
                 i++;
             }
@@ -610,7 +640,7 @@ export class GameScene extends Phaser.Scene {
 */
 
     addOrUpdateEnemy(data: any) {
-        const {enemyId, x, y, zoneId, timestamp, type, hp } = data;
+        const {enemyId, x, y, zoneId, timestamp, type, maxHp, hp } = data;
 
         // see if the received enemy is part of one of the active zones
         var isEnemyInAnActiveZone = zoneId === this.activeZoneList.currentZoneId ||
@@ -648,16 +678,25 @@ export class GameScene extends Phaser.Scene {
                     .setFrame('shadow.png');
             }
 
+            const hpBar = this.pools.enemy.statBar.get();
+            if (hpBar) {
+                hpBar.setVisible(true)
+                    .setActive(true)
+                    .setDepth(501)
+            }
+
             if (bodySprite && shadowSprite) {
                 this.enemies[enemyId] = {
                     bodySprite,
                     shadowSprite,
+                    hpBar,
                     type: type,
                     positionBuffer: [],
                     direction: data.direction,
                     zoneId: zoneId,
                     hasPoolSprites: true,
 
+                    maxHp: maxHp,
                     hp: hp,
                 };
             }
@@ -677,7 +716,9 @@ export class GameScene extends Phaser.Scene {
                 enemy.positionBuffer.shift();
             }
 
+            enemy.maxHp = maxHp;
             enemy.hp = hp;
+
             if (data.direction !== undefined) {
                 enemy.direction = data.direction;
             }
@@ -686,9 +727,10 @@ export class GameScene extends Phaser.Scene {
         // DEAD
         if (hp <= 0 && this.enemies[enemyId]) {
             const enemy = this.enemies[enemyId];
-            if (enemy.bodySprite && enemy.shadowSprite) {
+            if (enemy.bodySprite && enemy.shadowSprite && enemy.hpBar) {
                 this.pools.enemy.body.killAndHide(enemy.bodySprite);
                 this.pools.enemy.shadow.killAndHide(enemy.shadowSprite);
+                this.pools.enemy.statBar.killAndHide(enemy.hpBar);
             }
             delete this.enemies[enemyId];
         }
@@ -1020,7 +1062,7 @@ export class GameScene extends Phaser.Scene {
         for (const id in this.enemies) {
             const enemy = this.enemies[id];
             if (!enemy) continue;
-            if (!enemy || !enemy.bodySprite || !enemy.shadowSprite) continue;
+            if (!enemy || !enemy.bodySprite || !enemy.shadowSprite || !enemy.hpBar) continue;
             if (enemy.positionBuffer.length === 0) continue;
 
             // for testing without interp
@@ -1051,11 +1093,13 @@ export class GameScene extends Phaser.Scene {
                 const interpX = older.x + (newer.x - older.x) * Math.min(1, Math.max(0, alpha));
                 const interpY = older.y + (newer.y - older.y) * Math.min(1, Math.max(0, alpha));
                 enemy.bodySprite.setPosition(interpX, interpY);
-                enemy.shadowSprite.setPosition(interpX, interpY + (enemy.bodySprite.height *0.5));
+                enemy.shadowSprite.setPosition(interpX, interpY + (enemy.bodySprite.height *0.75));
+                enemy.hpBar.setPosition(interpX, interpY - (enemy.bodySprite.height) * 0.75);
             } else if (buffer.length > 0) {
                 const last = buffer[buffer.length - 1];
                 enemy.bodySprite.setPosition(last.x, last.y);
                 enemy.shadowSprite.setPosition(last.x, last.y + (enemy.bodySprite.height *0.5));
+                enemy.hpBar.setPosition(last.x, last.y - (enemy.bodySprite.height) * 0.5);
             }
 
             i++;
@@ -1103,7 +1147,7 @@ export class GameScene extends Phaser.Scene {
 
         this.scale.resize(newWidth, newHeight);
         const zoom = Math.min(newWidth / GAME_WIDTH, newHeight / GAME_HEIGHT);
-        this.cameras.main.setZoom(zoom / 2);
+        this.cameras.main.setZoom(zoom );
 
         const canvas = this.game.canvas;
         canvas.style.position = 'absolute';
