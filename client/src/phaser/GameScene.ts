@@ -162,9 +162,10 @@ export class GameScene extends Phaser.Scene {
                 sprite.setTexture('enemies'); // Single texture atlas for all bodies
                 sprite.setVisible(false); // Hidden until assigned
                 sprite.setActive(false); // Inactive until assigned
-                sprite.setDepth(501);
+                sprite.setDepth(500);
                 sprite.setFrame('easy.png');
                 sprite.setScale(1);
+                sprite.setOrigin(0.5, 1);
 
             }
         });
@@ -179,10 +180,11 @@ export class GameScene extends Phaser.Scene {
                 sprite.setTexture('enemies'); // Single texture atlas for all shadows
                 sprite.setVisible(false); // Hidden until assigned
                 sprite.setActive(false); // Inactive until assigned
-                sprite.setDepth(500);
+                sprite.setDepth(499);
                 sprite.setAlpha(0.5);
                 sprite.setFrame('shadow.png');
                 sprite.setScale(1);
+                sprite.setOrigin(0.5, 0.5);
             }
         });
         enemyShadowPool.createMultiple({ key: 'enemies', quantity: MAX_CONCURRENT_ENEMIES, active: false, visible: false });
@@ -193,12 +195,13 @@ export class GameScene extends Phaser.Scene {
             classType: Phaser.GameObjects.Rectangle,
             createCallback: (rectGameObject) => {
                 var rect = rectGameObject as Phaser.GameObjects.Rectangle;
-                rect.setSize(32, 8); // Set the rectangle size
+                rect.setSize(32, 4); // Set the rectangle size
                 rect.setFillStyle(0xff0000); // Red color
                 rect.setVisible(false); // Hidden until assigned
                 rect.setActive(false); // Inactive until assigned
-                rect.setDepth(500);
+                rect.setDepth(501);
                 rect.setAlpha(1);
+                rect.setOrigin(0.5, 1);
             }
         });
 
@@ -249,6 +252,11 @@ export class GameScene extends Phaser.Scene {
                             msg.data.forEach((update:any) => {
                                 this.addOrUpdateEnemy(update);
                             });
+                            break;
+                        case `abilityEffects`:
+                            msg.data.forEach((datum:any) => {
+                                this.handleAbilityEffect(datum);
+                            })
                         break;
 
                         default: break;
@@ -267,6 +275,27 @@ export class GameScene extends Phaser.Scene {
 
         this.resizeGame();
         window.addEventListener('resize', () => this.resizeGame());
+    }
+
+    handleAbilityEffect(abilityEffect: any){
+        const { data, type } = abilityEffect;
+        const {ability, casterId, damage, hp, targetId, impactX, impactY } = data;
+        console.log(data);
+        switch (ability){
+            case "HammerSwing":
+                var enemy = this.enemies[casterId];
+                var player = this.players[casterId];
+                if (enemy && enemy.bodySprite){
+                    console.log("showHammerSwing()");
+                    this.showHammerSwing(impactX, impactY, 'enemy');
+                }
+                else if (player && player.bodySprite){
+                    console.log("showHammerSwing() for player");
+                    this.showHammerSwing(impactX, impactY, 'player');
+                }
+            break;
+            default: break;
+        }
     }
 
     handleWelcome(datum: any) {
@@ -345,13 +374,16 @@ export class GameScene extends Phaser.Scene {
                     if (enemy.bodySprite) {
                         this.pools.enemy.body.killAndHide(enemy.bodySprite);
                         enemy.bodySprite = null;
-                        enemy.hasPoolSprites = false;
                     }
                     if (enemy.shadowSprite) {
                         this.pools.enemy.shadow.killAndHide(enemy.shadowSprite);
                         enemy.shadowSprite = null;
-                        enemy.hasPoolSprites = false;
                     }
+                    if (enemy.hpBar) {
+                        this.pools.enemy.statBar.killAndHide(enemy.hpBar);
+                        enemy.hpBar = null;
+                    }
+                    enemy.hasPoolSprites = false;
                     delete this.enemies[enemyId];
                 }
             }
@@ -487,6 +519,7 @@ export class GameScene extends Phaser.Scene {
             const newPlayerSprite = this.add.sprite(x, y, 'gotchi_placeholder')
                 .setDepth(1000)
                 .setScale(1)
+                .setOrigin(0.5,1)
 
             this.players[playerId] = {
                 bodySprite: newPlayerSprite,
@@ -647,17 +680,6 @@ export class GameScene extends Phaser.Scene {
             console.log(`Added placeholder player ${data.id}`);
         }
 
-        const player = this.players[data.id];
-        player.positionBuffer.push({
-            x: data.x,
-            y: data.y,
-            timestamp: data.timestamp
-        });
-
-        while (player.positionBuffer.length > MAX_POSITION_BUFFER_LENGTH) {
-            player.positionBuffer.shift();
-        }
-
         if (!player.isAssignedSVG && data.gotchiId !== 0) {
             player.gotchiId = data.gotchiId;
             player.isAssignedSVG = true;
@@ -667,21 +689,6 @@ export class GameScene extends Phaser.Scene {
         if (player.isAssignedSVG && data.direction !== undefined) {
             const directions = ['front', 'left', 'right', 'back'];
             player.sprite.setTexture(`gotchi-${data.gotchiId}-${directions[data.direction]}`);
-        }
-
-        if (data.id === this.localPlayerID) {
-            if (this.followedPlayerID !== data.id) {
-                this.followedPlayerID = data.id;
-                this.cameras.main.startFollow(player.sprite, true);
-            }
-            player.hp = data.hp;
-            player.maxHp = data.maxHp;
-            player.ap = data.ap;
-            player.maxAp = data.maxAp;
-            player.gameXp = data.gameXp;
-            player.gameLevel = data.gameLevel;
-            player.gameXpOnCurrentLevel = data.gameXpOnCurrentLevel;
-            player.gameXpTotalForNextLevel = data.gameXpTotalForNextLevel;
         }
     }
 */
@@ -702,7 +709,6 @@ export class GameScene extends Phaser.Scene {
         var enemy = this.enemies[enemyId]
         var hasPoolSprites = enemy ? enemy.hasPoolSprites : true;
 
-
         // NEW ENEMY or DOES NOT HAVE POOL SPRITES
         if ((!enemy || !hasPoolSprites) && hp > 0) {
             this.rezoneBatchCounter++;
@@ -711,8 +717,6 @@ export class GameScene extends Phaser.Scene {
             if (bodySprite) {
                 bodySprite.setVisible(true)
                 .setActive(true)
-                .setDepth(500)
-                .setAlpha(1)
                 .setFrame(`${type}.png`);
             }
 
@@ -720,16 +724,12 @@ export class GameScene extends Phaser.Scene {
             if (shadowSprite){
                 shadowSprite.setVisible(true)
                     .setActive(true)
-                    .setDepth(499)
-                    .setAlpha(0.5)
-                    .setFrame('shadow.png');
             }
 
             const hpBar = this.pools.enemy.statBar.get();
             if (hpBar) {
                 hpBar.setVisible(true)
                     .setActive(true)
-                    .setDepth(501)
             }
 
             if (bodySprite && shadowSprite) {
@@ -773,8 +773,10 @@ export class GameScene extends Phaser.Scene {
 
             // check for damage update
             if (enemy.hp < enemy.previousHp) {
+                console.log("damaged enemy!", enemy.hp, " ", enemy.previousHp);
                 if (this.isEnemyOnScreen(enemy)) {
-                    this.showDamageToPlayerPopupText(enemy.previousHp - enemy.hp, enemyId);
+                    console.log("show enemy damage")
+                    this.showDamageToEnemyPopupText(enemy.previousHp - enemy.hp, enemyId);
                 } 
                 enemy.previousHp = enemy.hp;
             }
@@ -797,7 +799,7 @@ export class GameScene extends Phaser.Scene {
         if (!player) return;
 
         const {x, y} = player.bodySprite;
-        const offsetY = 64;
+        const offsetY = -64;
         const textColor = "red";
 
         const damageText = this.getPooledText(x, y + offsetY, damageValue.toString());
@@ -825,7 +827,7 @@ export class GameScene extends Phaser.Scene {
         if (!enemy || !enemy.bodySprite) return;
 
         const {x, y} = enemy.bodySprite;
-        const offsetY = 48;
+        const offsetY = -48;
         const textColor = "white";
 
         const damageText = this.getPooledText(x, y + offsetY, damageValue.toString());
@@ -847,44 +849,6 @@ export class GameScene extends Phaser.Scene {
             onComplete: () => damageText.setVisible(false),
         });
     }
-
-    // handleDamageUpdate(data: any) {
-    //     const { id, type, damage } = data;
-    //     let x: number, y: number, textColor: string, offsetY: number;
-
-    //     if (type === "enemy" && this.enemies[id]) {
-    //         x = this.enemies[id].bodySprite.x;
-    //         y = this.enemies[id].bodySprite.y;
-    //         textColor = '#ffffff';
-    //         offsetY = -32;
-    //     } else if (type === "player" && this.players[id]) {
-    //         x = this.players[id].sprite.x;
-    //         y = this.players[id].sprite.y;
-    //         textColor = '#ff0000';
-    //         offsetY = -64;
-    //     } else {
-    //         return;
-    //     }
-
-    //     const damageText = this.getPooledText(x, y + offsetY, damage.toString());
-    //     damageText.setStyle({
-    //         fontFamily: 'Pixelar',
-    //         fontSize: '24px',
-    //         color: textColor,
-    //         stroke: '#000000',
-    //         strokeThickness: 1,
-    //     });
-    //     damageText.setOrigin(0.5, 0.5).setDepth(3000);
-
-    //     this.tweens.add({
-    //         targets: damageText,
-    //         y: damageText.y - 20,
-    //         alpha: 0,
-    //         duration: 1000,
-    //         ease: 'Quad.easeIn',
-    //         onComplete: () => damageText.setVisible(false),
-    //     });
-    // }
 
     handleLevelUp(data: any) {
         const player = this.players[this.localPlayerID];
@@ -976,6 +940,40 @@ export class GameScene extends Phaser.Scene {
     //         }
     //     }
     // }
+
+    showHammerSwing(x:number, y:number, entityType: 'enemy' | 'player') {
+        const radius = entityType == "player" ? 100 : 70;
+        const attackColor = entityType === "player" ? 0xffffff : 0xff0000;
+
+        const circle = this.getPooledCircle(x, y, radius, attackColor);
+        circle.setAlpha(0.5).setVisible(true).setDepth(900);
+
+        const rectWidth = radius;
+        const rectHeight = radius * 0.1;
+        const rectangle = this.add.rectangle(radius * 0.75, 0, rectWidth * 0.5, rectHeight, attackColor);
+        rectangle.setAlpha(0.9);
+
+        const container = this.add.container(x, y, [rectangle]).setDepth(901);
+        container.rotation = Phaser.Math.DegToRad(90);
+
+        this.tweens.add({
+            targets: container,
+            angle: 360,
+            duration: 250,
+            repeat: 0,
+            ease: 'Linear',
+        });
+
+        this.tweens.add({
+            targets: [circle],
+            alpha: 0.2,
+            duration: 250,
+            onComplete: () => {
+                circle.setVisible(false);
+                container.destroy();
+            },
+        });
+    }
 
     handleAttackUpdates(data: any) {
         const radius = data.radius;
@@ -1205,13 +1203,13 @@ export class GameScene extends Phaser.Scene {
                 const interpX = older.x + (newer.x - older.x) * Math.min(1, Math.max(0, alpha));
                 const interpY = older.y + (newer.y - older.y) * Math.min(1, Math.max(0, alpha));
                 enemy.bodySprite.setPosition(interpX, interpY);
-                enemy.shadowSprite.setPosition(interpX, interpY + (enemy.bodySprite.height *0.75));
-                enemy.hpBar.setPosition(interpX, interpY - (enemy.bodySprite.height) * 0.75);
+                enemy.shadowSprite.setPosition(interpX, interpY + (enemy.bodySprite.height *0));
+                enemy.hpBar.setPosition(interpX, interpY - (enemy.bodySprite.height) * 1.2);
             } else if (buffer.length > 0) {
                 const last = buffer[buffer.length - 1];
                 enemy.bodySprite.setPosition(last.x, last.y);
-                enemy.shadowSprite.setPosition(last.x, last.y + (enemy.bodySprite.height *0.5));
-                enemy.hpBar.setPosition(last.x, last.y - (enemy.bodySprite.height) * 0.5);
+                enemy.shadowSprite.setPosition(last.x, last.y + (enemy.bodySprite.height *0));
+                enemy.hpBar.setPosition(last.x, last.y - (enemy.bodySprite.height) * 1.2);
             }
 
             i++;
@@ -1259,7 +1257,7 @@ export class GameScene extends Phaser.Scene {
 
         this.scale.resize(newWidth, newHeight);
         const zoom = Math.min(newWidth / GAME_WIDTH, newHeight / GAME_HEIGHT);
-        this.cameras.main.setZoom(zoom );
+        this.cameras.main.setZoom(zoom*1.5);
 
         const canvas = this.game.canvas;
         canvas.style.position = 'absolute';

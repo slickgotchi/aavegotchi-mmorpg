@@ -24,7 +24,7 @@ export function PlayerStatsBars({ gameRef, gameDimensions }: PlayerStatsBarsProp
                 if (gameScene && gameScene.getPlayers && gameScene.getLocalPlayerID) {
                     const players = gameScene.getPlayers();
                     const localPlayerId = gameScene.getLocalPlayerID();
-                    console.log(players, localPlayerId, players[localPlayerId])
+                    // console.log(players, localPlayerId, players[localPlayerId])
                     if (players && localPlayerId && players[localPlayerId]) {
                         // Create a new object to ensure React detects the change
                         const newStats = { ...players[localPlayerId] };

@@ -1,277 +1,259 @@
 package main
 
-/*
-package main
-
 import (
+	"bytes"
 	"encoding/json"
 	"log"
-	"math"
 	"net/http"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
 
-const (
-	MAX_LEVEL         = 50
-	BASE_XP_PER_LEVEL = 100
-	XP_GROWTH_FACTOR  = 1.5
-)
-
-var totalXpRequiredForLevel = make([]int, MAX_LEVEL+1)
-
-func init() {
-	for level := 1; level <= MAX_LEVEL; level++ {
-		totalXpRequiredForLevel[level] = int(float64(BASE_XP_PER_LEVEL) * math.Pow(float64(level-1), XP_GROWTH_FACTOR))
-	}
-}
-
+// Player represents a player entity
 type Player struct {
-	ID                      string
-	X                       float32
-	Y                       float32
-	HP                      int
-	MaxHP                   int
-	ATK                     int
-	AP                      int
-	MaxAP                   int
-	RGN                     float32
-	Speed                   float32
-	Conn                    *websocket.Conn
-	GotchiID                int
-	IsPlaying               bool
-	VelocityX               float32
-	VelocityY               float32
-	Direction               int
-	Mu                      sync.RWMutex
-	AttackTimerMs           float32
-	AttackIntervalMs        float32
-	AttackRadius            float32
+	ID     string
+	ZoneID int
+	X, Y   float32 // Tile coordinates
+	VX, VY float32 // Tiles per second
+	Conn   *websocket.Conn
+
+	SpriteHeightPixels float32
+
+	Stats Stats // Shared stats struct
+
+	// Game XP and leveling
 	GameXP                  int
 	GameLevel               int
 	GameXPOnCurrentLevel    int
 	GameXPTotalForNextLevel int
-	OnchainXP               int
-	OnchainLevel            int
-	LastUpdate              int64 // For velocity tracking
-	ZoneID                  int   // Track player's zone
-	ConnMu                  sync.Mutex
+
+	BaseAttackTimerS    float32
+	BaseAttackIntervalS float32
 }
 
-func NewPlayer(conn *websocket.Conn, remoteAddr string) *Player {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Println("Recovered from panic:", r)
-		}
-	}()
-
-	p := &Player{
-		ID:               remoteAddr,
-		X:                float32(MAP_WIDTH_TILES*PIXELS_PER_TILE) / 2,
-		Y:                float32(MAP_HEIGHT_TILES*PIXELS_PER_TILE) / 2,
-		HP:               300,
-		MaxHP:            300,
-		ATK:              45,
-		AP:               200,
-		MaxAP:            200,
-		RGN:              1.0,
-		Speed:            5 * 32,
-		Conn:             conn,
-		GotchiID:         0,
-		IsPlaying:        false,
-		VelocityX:        0,
-		VelocityY:        0,
-		Direction:        0,
-		AttackTimerMs:    0,
-		AttackIntervalMs: 1000,
-		AttackRadius:     4 * 32,
-		GameXP:           0,
-		GameLevel:        1,
-		LastUpdate:       time.Now().UnixMilli(),
-		ZoneID:           0, // Default to zone 0; expand later
-	}
-	log.Println("try add xp")
-	addXP(p, 0)
-
-	log.Println("Locking zone", p.ZoneID)
-	zones[p.ZoneID].Mu.Lock()
-	zones[p.ZoneID].Players[remoteAddr] = p
-	zones[p.ZoneID].Mu.Unlock()
-
-	log.Println("return player")
-	return p
+// GetID returns the player's ID
+func (p *Player) GetID() string {
+	return p.ID
 }
 
-func HandlePlayerConnection(w http.ResponseWriter, r *http.Request) {
-	log.Println("try upgrade connection")
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Println("WebSocket upgrade failed:", err)
-		return
-	}
-
-	log.Println("make a new player")
-	p := NewPlayer(conn, r.RemoteAddr)
-	welcomeMsg := Message{
-		Type: "welcome",
-		Data: json.RawMessage(`{"id":"` + p.ID + `"}`), // Send raw JSON
-	}
-	p.ConnMu.Lock()
-	if err := conn.WriteJSON(welcomeMsg); err != nil {
-		log.Println("Failed to send welcome to", p.ID, ":", err)
-	}
-	p.ConnMu.Unlock()
-
-	log.Println("Player connection established:", p.ID) // Add this log
-
-	go func(p *Player) {
-		defer func() {
-			eventChan <- Event{Type: "disconnect", ZoneID: p.ZoneID, PlayerID: p.ID, Timestamp: time.Now().UnixMilli()}
-			p.Conn.Close()
-			log.Println("Client disconnected:", p.ID)
-			broadcastMessage(Message{
-				Type: "playerDisconnected",
-				Data: mustMarshal(map[string]interface{}{"id": p.ID}),
-			}, "")
-		}()
-
-		for {
-			_, msg, err := p.Conn.ReadMessage()
-			if err != nil {
-				log.Println("Read error for", p.ID, ":", err)
-				return
-			}
-			var m Message
-			if err := json.Unmarshal(msg, &m); err != nil {
-				log.Println("Failed to unmarshal message from", p.ID, ":", err)
-				continue
-			}
-			eventChan <- Event{
-				Type:      m.Type,
-				ZoneID:    p.ZoneID,
-				PlayerID:  p.ID,
-				Data:      m.Data,
-				Timestamp: time.Now().UnixMilli(),
-			}
-			log.Println("Received message from", p.ID, "Type:", m.Type) // Add this log
-		}
-	}(p)
-
-	<-make(chan struct{})
+// GetX returns the player's X coordinate
+func (p *Player) GetX() float32 {
+	return p.X
 }
 
-func HandlePlayerCleanup() {
-	for id := range cleanupChan {
-		for _, zone := range zones {
-			zone.Mu.Lock()
-			if _, exists := zone.Players[id]; exists {
-				delete(zone.Players, id)
-			}
-			zone.Mu.Unlock()
-		}
-	}
+// GetY returns the player's Y coordinate
+func (p *Player) GetY() float32 {
+	return p.Y
 }
 
-func handlePlayerMessageJoin(p *Player, msg Message) {
-	var joinData struct {
-		GotchiID int `json:"gotchiId"`
-	}
-	if err := json.Unmarshal(msg.Data, &joinData); err != nil || joinData.GotchiID == 0 {
-		log.Println("Invalid join data from", p.ID, ":", err)
-		return
-	}
-
-	p.Mu.Lock()
-	p.GotchiID = joinData.GotchiID
-	p.Mu.Unlock()
-
-	log.Println("Player joined with GotchiID:", p.GotchiID)
-
-	brs, err := fetchGotchiStats(strconv.Itoa(joinData.GotchiID))
-	if err != nil {
-		log.Println("Failed to fetch stats for", p.ID, ":", err)
-		return
-	}
-
-	p.Mu.Lock()
-	p.HP, p.ATK, p.AP, p.RGN, p.Speed = calculateStats(brs)
-	p.MaxHP, p.MaxAP = p.HP, p.AP
-	p.IsPlaying = true
-	p.X = float32(MAP_WIDTH_TILES*PIXELS_PER_TILE) / 2
-	p.Y = float32(MAP_HEIGHT_TILES*PIXELS_PER_TILE) / 2
-	p.Direction = 0
-	p.Mu.Unlock()
+// GetStats returns the player's stats
+func (p *Player) GetStats() *Stats {
+	return &p.Stats
 }
 
-func handlePlayerMessageInput(p *Player, data json.RawMessage) {
-	var inputData struct {
-		ID   string `json:"id"`
-		Keys struct {
-			W     bool `json:"W"`
-			A     bool `json:"A"`
-			S     bool `json:"S"`
-			D     bool `json:"D"`
-			SPACE bool `json:"SPACE"`
-		} `json:"keys"`
+func (p *Player) GetSpriteHeightPixels() float32 {
+	return p.SpriteHeightPixels
+}
+
+// NewPlayer creates a new player with default stats
+func NewPlayer(id string, zoneID int, x, y float32, conn *websocket.Conn) *Player {
+	player := &Player{
+		ID:     id,
+		ZoneID: zoneID,
+		X:      x,
+		Y:      y,
+		Conn:   conn,
+
+		SpriteHeightPixels: 64,
+
+		Stats: Stats{
+			MaxHP: 300,
+			HP:    300,
+			MaxAP: 150,
+			AP:    150,
+			ATK:   10,
+		},
+
+		GameXP:                  0,
+		GameLevel:               1,
+		GameXPOnCurrentLevel:    0,
+		GameXPTotalForNextLevel: totalXpRequiredForLevel[2],
+
+		BaseAttackTimerS:    0,
+		BaseAttackIntervalS: 1,
 	}
-	if err := json.Unmarshal(data, &inputData); err != nil {
-		log.Println("Failed to unmarshal input for", p.ID, ":", err)
-		return
+	return player
+}
+
+// HandleInput processes incoming input messages and updates player velocity
+func (p *Player) HandleInput(msg Message, gs *GameServer, zone *Zone) []Message {
+	var messages []Message
+	if msg.Type != "input" {
+		log.Printf("Unhandled message type for player %s: %s", p.ID, msg.Type)
+		return messages
 	}
 
-	p.Mu.Lock()
-	vx, vy := float32(0), float32(0)
-	if inputData.Keys.W {
-		vy -= p.Speed
+	data, ok := msg.Data.(map[string]interface{})
+	if !ok {
+		log.Printf("Invalid input message data for player %s: expected map", p.ID)
+		return messages
 	}
-	if inputData.Keys.S {
-		vy += p.Speed
+	keys, ok := data["keys"].(map[string]interface{})
+	if !ok {
+		log.Printf("Invalid input message keys for player %s: expected map", p.ID)
+		return messages
 	}
-	if inputData.Keys.A {
-		vx -= p.Speed
-	}
-	if inputData.Keys.D {
-		vx += p.Speed
-	}
-	if vx != 0 || vy != 0 {
-		norm := float32(math.Sqrt(float64(vx*vx + vy*vy)))
-		p.VelocityX = (vx / norm) * p.Speed
-		p.VelocityY = (vy / norm) * p.Speed
-		p.LastUpdate = time.Now().UnixMilli()
-		if p.VelocityY < 0 {
-			p.Direction = 3
-		}
-		if p.VelocityY > 0 {
-			p.Direction = 0
-		}
-		if p.VelocityX > 0 {
-			p.Direction = 2
-		}
-		if p.VelocityX < 0 {
-			p.Direction = 1
-		}
-	} else {
-		p.VelocityX, p.VelocityY = 0, 0
-	}
-	p.Mu.Unlock()
 
-	if inputData.Keys.SPACE {
-		eventChan <- Event{
-			Type:      "attack",
-			ZoneID:    p.ZoneID,
+	p.VX = 0
+	p.VY = 0
+	speed := float32(PlayerMoveSpeed)
+	if w, ok := keys["W"].(bool); ok && w {
+		p.VY = -speed
+	}
+	if s, ok := keys["S"].(bool); ok && s {
+		p.VY = speed
+	}
+	if a, ok := keys["A"].(bool); ok && a {
+		p.VX = -speed
+	}
+	if d, ok := keys["D"].(bool); ok && d {
+		p.VX = speed
+	}
+	if space, ok := keys["SPACE"].(bool); ok && space {
+		log.Printf("Player %s pressed SPACE in Zone %d", p.ID, zone.ID)
+		// Execute HammerSwing ability
+		messages = append(messages, ExecuteAbility(p, "HammerSwing", gs, zone)...)
+	}
+
+	return messages
+}
+
+// UpdatePlayer updates the player's position, handles zone switching & general ability handling
+func (p *Player) UpdatePlayer(gs *GameServer, zone *Zone, dt float32) []Message {
+	var messages []Message
+
+	p.X += p.VX * dt
+	p.Y += p.VY * dt
+	newZoneID := gs.calculateZoneID(p.X, p.Y, p)
+
+	// Check for null zone or out of bounds
+	if newZoneID == 0 || IsEmptyTilemapGridName(gs.Zones[newZoneID].TilemapRef) || p.X < 0 || p.Y < 0 {
+		p.X -= p.VX * dt
+		p.Y -= p.VY * dt
+		return messages
+	}
+
+	if newZoneID != p.ZoneID {
+		var lastZoneUpdates []PlayerUpdate
+		lastZoneUpdates = append(lastZoneUpdates, PlayerUpdate{
 			PlayerID:  p.ID,
+			X:         p.X,
+			Y:         p.Y,
+			ZoneID:    p.ZoneID,
 			Timestamp: time.Now().UnixMilli(),
+
+			MaxHP: p.Stats.MaxHP,
+			HP:    p.Stats.HP,
+			MaxAP: p.Stats.MaxAP,
+			AP:    p.Stats.AP,
+
+			GameXP:                  p.GameXP,
+			GameLevel:               p.GameLevel,
+			GameXPOnCurrentLevel:    p.GameXPOnCurrentLevel,
+			GameXPTotalForNextLevel: p.GameXPTotalForNextLevel,
+		})
+
+		batch := []Message{
+			{Type: "playerUpdates", Data: lastZoneUpdates},
 		}
+		if err := p.Conn.WriteJSON(batch); err != nil {
+			log.Printf("Error sending batch to %s: %v", p.ID, err)
+		}
+
+		gs.switchZone(p, zone, newZoneID)
 	}
-	log.Println("Processed input for", p.ID, "VelocityX:", p.VelocityX, "VelocityY:", p.VelocityY) // Add this log
+
+	// activate base HammerSwing ability if enemies within range
+	p.BaseAttackTimerS -= dt
+	if p.BaseAttackTimerS < 0 {
+		p.BaseAttackTimerS = p.BaseAttackIntervalS
+
+		// check enemeies on screen
+		if isEnemiesOnScreen(p, zone) {
+			log.Println("enemies on screen")
+			messages = append(messages, ExecuteAbility(p, "HammerSwing", gs, zone)...)
+		}
+
+	}
+
+	return messages
 }
 
-func addXP(p *Player, amount int) {
-	p.Mu.Lock()
-	defer p.Mu.Unlock()
+// enemiesOnscreen checks if any enemies are within the player's viewport
+func isEnemiesOnScreen(p *Player, zone *Zone) bool {
+	// Assume a viewport of 800x600 pixels (adjust based on client viewport)
+	const viewportWidth = 1280
+	const viewportHeight = 800
+	halfWidth := float32(viewportWidth / 2)
+	halfHeight := float32(viewportHeight / 2)
+
+	// Viewport boundaries centered on player
+	minX := p.X - halfWidth
+	maxX := p.X + halfWidth
+	minY := p.Y - halfHeight
+	maxY := p.Y + halfHeight
+
+	for _, enemy := range zone.Enemies {
+		if enemy.X >= minX && enemy.X <= maxX && enemy.Y >= minY && enemy.Y <= maxY {
+			return true // At least one enemy is onscreen
+		}
+	}
+	return false // No enemies onscreen
+}
+
+// fetchGotchiStats fetches stats for a player based on their gotchi ID
+func fetchGotchiStats(gotchiId string) (int, error) {
+	query := `{"query":"query($id: ID!) { aavegotchi(id: $id) { modifiedNumericTraits withSetsRarityScore } }","variables":{"id":"` + gotchiId + `"}}`
+	resp, err := http.Post("https://subgraph.satsuma-prod.com/tWYl5n5y04oz/aavegotchi/aavegotchi-core-matic/api", "application/json", bytes.NewBuffer([]byte(query)))
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	var result struct {
+		Data struct {
+			Aavegotchi struct {
+				ModifiedNumericTraits []int  `json:"modifiedNumericTraits"`
+				WithSetsRarityScore   string `json:"withSetsRarityScore"`
+			} `json:"aavegotchi"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, err
+	}
+	if result.Data.Aavegotchi.ModifiedNumericTraits == nil || len(result.Data.Aavegotchi.ModifiedNumericTraits) != 6 {
+		return 0, nil
+	}
+	brs, err := strconv.Atoi(result.Data.Aavegotchi.WithSetsRarityScore)
+	if err != nil {
+		return 0, err
+	}
+	return brs, nil
+}
+
+// calculatePlayerStats calculates player stats based on BRS
+func calculatePlayerStats(brs int) (hp, atk, ap int, rgn, speed float32) {
+	hp = brs
+	atk = brs / 10
+	ap = brs / 2
+	rgn = float32(brs) / 100
+	speed = 5 * 32
+	return
+}
+
+// addPlayerXP adds XP to a player and handles leveling up
+func addPlayerXP(p *Player, amount int) {
 	p.GameXP += amount
 
 	totalXpRequiredForCurrentLevel := totalXpRequiredForLevel[p.GameLevel]
@@ -281,7 +263,7 @@ func addXP(p *Player, amount int) {
 
 	for p.GameXP >= totalXpRequiredForLevel[p.GameLevel+1] && p.GameLevel < MAX_LEVEL {
 		p.GameLevel++
-		p.ATK = int(float64(p.ATK) * 1.1)
+		p.Stats.ATK = int(float64(p.Stats.ATK) * 1.1)
 		totalXpRequiredForCurrentLevel = totalXpRequiredForLevel[p.GameLevel]
 		totalXpRequiredForNextLevel = totalXpRequiredForLevel[p.GameLevel+1]
 		p.GameXPOnCurrentLevel = p.GameXP - totalXpRequiredForCurrentLevel
@@ -289,23 +271,20 @@ func addXP(p *Player, amount int) {
 
 		levelUpMsg := Message{
 			Type: "levelUp",
-			Data: mustMarshal(struct {
+			Data: struct {
 				NewLevel                int `json:"newLevel"`
 				NewATK                  int `json:"newATK"`
 				GameXPOnCurrentLevel    int `json:"gameXpOnCurrentLevel"`
 				GameXPTotalForNextLevel int `json:"gameXpTotalForNextLevel"`
 			}{
 				NewLevel:                p.GameLevel,
-				NewATK:                  p.ATK,
+				NewATK:                  p.Stats.ATK,
 				GameXPOnCurrentLevel:    p.GameXPOnCurrentLevel,
 				GameXPTotalForNextLevel: p.GameXPTotalForNextLevel,
-			}),
+			},
 		}
-		p.ConnMu.Lock() // Lock WebSocket write
 		if err := p.Conn.WriteJSON(levelUpMsg); err != nil {
 			log.Println("Failed to send level-up message to", p.ID, ":", err)
 		}
-		p.ConnMu.Unlock() // Unlock WebSocket write
 	}
 }
-*/

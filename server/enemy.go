@@ -1,262 +1,370 @@
 package main
 
-/*
-package main
-
 import (
+	"fmt"
 	"log"
 	"math"
 	"math/rand"
-	"sync"
 	"time"
 )
 
-type EnemyProfile struct {
-	HP              int
-	MaxHP           int
-	RoamSpeed       float32
-	AggroRadius     float32
-	TelegraphRadius float32
-	AttackRadius    float32
-	AttackDamage    int
-	XPDrop          int
+// Stats holds common game statistics for both players and enemies
+type Stats struct {
+	MaxHP int
+	HP    int
+	MaxAP int
+	AP    int
+	ATK   int
 }
 
-var EnemyProfiles = map[string]EnemyProfile{
-	"easy": {
-		HP:              50,
-		MaxHP:           50,
-		RoamSpeed:       1 * 32,
-		AggroRadius:     4 * 32,
-		TelegraphRadius: 1 * 32,
-		AttackRadius:    1 * 32,
-		AttackDamage:    5,
-		XPDrop:          10,
-	},
-	"medium": {
-		HP:              100,
-		MaxHP:           100,
-		RoamSpeed:       1.5 * 32,
-		AggroRadius:     8 * 32,
-		TelegraphRadius: 1.5 * 32,
-		AttackRadius:    1.5 * 32,
-		AttackDamage:    10,
-		XPDrop:          20,
-	},
-	"hard": {
-		HP:              150,
-		MaxHP:           150,
-		RoamSpeed:       2 * 32,
-		AggroRadius:     12 * 32,
-		TelegraphRadius: 2 * 32,
-		AttackRadius:    2 * 32,
-		AttackDamage:    15,
-		XPDrop:          30,
-	},
-}
-
-const (
-	StateSpawn     = "Spawn"
-	StateRoam      = "Roam"
-	StatePursue    = "Pursue"
-	StateTelegraph = "Telegraph"
-	StateAttack    = "Attack"
-	StateCooldown  = "Cooldown"
-	StateDeath     = "Death"
-)
-
+// Enemy represents an enemy entity
 type Enemy struct {
-	ID               string
-	X                float32
-	Y                float32
-	Type             string
-	LayerName        string
-	HP               int
-	MaxHP            int
-	RespawnTime      int64
-	IsAlive          bool
-	VelocityX        float32
-	VelocityY        float32
-	Direction        int
-	XPDrop           int
-	KillerID         string
-	IsDeathProcessed bool
-	Mu               sync.RWMutex
-	State            string
-	StateTimer       float32
-	SpawnPointX      float32
-	SpawnPointY      float32
-	RoamSpeed        float32
-	AggroRadius      float32
-	TelegraphRadius  float32
-	AttackRadius     float32
-	AttackDamage     int
-	LastUpdate       int64 // For velocity tracking
-	ZoneID           int   // Track enemy's zone
+	ID                 string
+	ZoneID             int
+	X, Y               float32 // Tile coordinates
+	VX, VY             float32 // Tiles per second
+	Type               string  // "easy", "medium", "hard"
+	Direction          int
+	SpriteHeightPixels float32
+
+	Stats Stats // Shared stats struct
+
+	// AI state machine
+	State          string        // Current state ("Spawn", "Roam", etc.)
+	StateStartTime time.Time     // When the current state started
+	StateDuration  time.Duration // Duration of the current state
+
+	// AI configuration (set by enemy type)
+	PursueTriggerRadius    float32       // Radius to trigger Pursue state
+	TelegraphTriggerRadius float32       // Radius to trigger Telegraph state
+	TelegraphDuration      time.Duration // Duration of Telegraph state
+	AttackDuration         time.Duration // Duration of Attack state
+	DeathDuration          time.Duration // Duration of Death state
+
+	// Ability configuration
+	Ability     Ability // Generic ability slot
+	AbilityName string  // Name of the ability (for reference)
 }
 
-func NewEnemy(id, enemyType, layerName string, x, y float32) *Enemy {
-	zoneID := 0 // Default to zone 0; adjust later
-	profile, ok := EnemyProfiles[enemyType]
-	if !ok {
-		profile = EnemyProfiles["medium"]
-	}
-	e := &Enemy{
-		ID:              id,
-		X:               x,
-		Y:               y,
-		Type:            enemyType,
-		LayerName:       layerName,
-		HP:              profile.HP,
-		MaxHP:           profile.MaxHP,
-		IsAlive:         true,
-		Direction:       0,
-		State:           StateSpawn,
-		StateTimer:      1.0,
-		SpawnPointX:     x,
-		SpawnPointY:     y,
-		RoamSpeed:       profile.RoamSpeed,
-		AggroRadius:     profile.AggroRadius,
-		TelegraphRadius: profile.TelegraphRadius,
-		AttackRadius:    profile.AttackRadius,
-		AttackDamage:    profile.AttackDamage,
-		XPDrop:          profile.XPDrop,
-		KillerID:        "",
-		LastUpdate:      time.Now().UnixMilli(),
-		ZoneID:          zoneID,
-	}
-	zones[zoneID].Mu.Lock()
-	zones[zoneID].Enemies[id] = e
-	zones[zoneID].Mu.Unlock()
-	return e
+// GetID returns the enemy's ID
+func (e *Enemy) GetID() string {
+	return e.ID
 }
 
-func OnDeath(e *Enemy, killerID string) {
-	e.Mu.Lock()
-	defer e.Mu.Unlock()
-	if e.IsDeathProcessed {
-		return
-	}
-	e.IsDeathProcessed = true
-	e.KillerID = killerID
-	e.State = StateDeath
-	e.StateTimer = 1.0
-	e.VelocityX = 0
-	e.VelocityY = 0
+// GetX returns the enemy's X coordinate
+func (e *Enemy) GetX() float32 {
+	return e.X
+}
 
-	if killerID != "" {
-		for _, zone := range zones {
-			zone.Mu.RLock()
-			if killer, exists := zone.Players[killerID]; exists {
-				addXP(killer, e.XPDrop)
-				log.Println("Awarded", e.XPDrop, "XP to player", killerID, "for killing enemy", e.ID)
+// GetY returns the enemy's Y coordinate
+func (e *Enemy) GetY() float32 {
+	return e.Y
+}
+
+// GetStats returns the enemy's stats
+func (e *Enemy) GetStats() *Stats {
+	return &e.Stats
+}
+
+func (e *Enemy) GetSpriteHeightPixels() float32 {
+	return e.SpriteHeightPixels
+}
+
+// NewEnemy creates a new enemy with the given configuration
+func NewEnemy(zoneID int, x, y float32, enemyType string) *Enemy {
+	config, exists := EnemyConfigs[enemyType]
+	if !exists {
+		log.Printf("Unknown enemy type: %s, defaulting to easy", enemyType)
+		config = EnemyConfigs["easy"]
+	}
+
+	enemy := &Enemy{
+		ID:                 fmt.Sprintf("enemy%d_%d", zoneID, rand.Int()),
+		ZoneID:             zoneID,
+		X:                  x,
+		Y:                  y,
+		VX:                 float32(rand.Float32()*2-1) * 100,
+		VY:                 float32(rand.Float32()*2-1) * 100,
+		Type:               enemyType,
+		Direction:          0,
+		SpriteHeightPixels: 32, // make all enemies 32 pixels high for now
+
+		Stats: Stats{
+			MaxHP: config.MaxHP,
+			HP:    config.MaxHP,
+			MaxAP: config.MaxAP,
+			AP:    config.MaxAP,
+			ATK:   config.ATK,
+		},
+
+		// AI configuration
+		PursueTriggerRadius:    config.PursueTriggerRadius,
+		TelegraphTriggerRadius: config.TelegraphTriggerRadius,
+		TelegraphDuration:      config.TelegraphDuration,
+		AttackDuration:         config.AttackDuration,
+		DeathDuration:          config.DeathDuration,
+
+		// Initial state
+		State:          "Spawn",
+		StateStartTime: time.Now(),
+		StateDuration:  config.SpawnDuration,
+
+		// Ability configuration
+		AbilityName: config.AbilityName,
+	}
+
+	// Initialize the ability based on AbilityName
+	switch enemy.AbilityName {
+	case "HammerSwing":
+		enemy.Ability = NewHammerSwingForCaster(enemy)
+	case "Fireball":
+		enemy.Ability = NewFireballForCaster(enemy)
+	case "":
+		log.Printf("No ability specified for enemy type %s", enemyType)
+		enemy.Ability = nil
+	default:
+		log.Printf("Unknown ability %s for enemy type %s", enemy.AbilityName, enemyType)
+		enemy.Ability = nil
+	}
+
+	return enemy
+}
+
+// UpdateEnemy updates the enemy's state and position
+func (e *Enemy) UpdateEnemy(gs *GameServer, zone *Zone) ([]Message, bool) {
+	var messages []Message
+
+	// Check for death
+	if e.Stats.HP <= 0 && e.State != "Death" {
+		e.State = "Death"
+		e.StateStartTime = time.Now()
+		e.StateDuration = e.DeathDuration
+		e.VX, e.VY = 0, 0 // Stop moving
+	}
+
+	// Handle state transitions
+	switch e.State {
+	case "Spawn":
+		if time.Since(e.StateStartTime) >= e.StateDuration {
+			e.State = "Roam"
+			e.StateStartTime = time.Now()
+			e.StateDuration = 0 // Roam has no fixed duration
+			log.Println("Roam")
+		}
+
+	case "Roam":
+		// Randomly wander
+		if rand.Float32() < 0.02 { // 2% chance per tick to change direction
+			e.VX = float32(rand.Float32()*2-1) * 100
+			e.VY = float32(rand.Float32()*2-1) * 100
+		}
+		// Check for nearby players to pursue
+		nearestPlayer, dist := e.findNearestPlayer(zone)
+		if nearestPlayer != nil && dist <= e.PursueTriggerRadius {
+			e.State = "Pursue"
+			e.StateStartTime = time.Now()
+			e.StateDuration = 0 // Pursue has no fixed duration
+			log.Println("Pursue")
+		}
+
+	case "Pursue":
+		nearestPlayer, dist := e.findNearestPlayer(zone)
+		if nearestPlayer == nil || dist > e.PursueTriggerRadius {
+			e.State = "Roam"
+			e.StateStartTime = time.Now()
+			e.StateDuration = 0
+			log.Println("Roam")
+		} else if dist <= e.TelegraphTriggerRadius {
+			e.State = "Telegraph"
+			e.StateStartTime = time.Now()
+			e.StateDuration = e.TelegraphDuration
+			e.VX, e.VY = 0, 0 // Stop moving to telegraph attack
+			log.Println("Telegraph")
+
+			// For Fireball, select the target and set the impact position
+			if e.AbilityName == "Fireball" {
+				fireball, ok := e.Ability.(*Fireball)
+				if !ok {
+					log.Printf("Enemy %s has Fireball ability but type assertion failed", e.ID)
+				} else {
+					// Find the nearest valid target within range
+					var target Entity
+					var targetDist float32 = fireball.Range
+					var targetID string
+					if fireball.TargetType == "player" || fireball.TargetType == "all" {
+						for _, player := range zone.Players {
+							if player.GetID() == e.GetID() {
+								continue
+							}
+							dx := player.GetX() - e.GetX()
+							dy := player.GetY() - e.GetY()
+							dist := float32(math.Sqrt(float64(dx*dx + dy*dy)))
+							if dist <= fireball.Range && dist < targetDist {
+								target = player
+								targetDist = dist
+								targetID = player.GetID()
+							}
+						}
+					}
+					if fireball.TargetType == "enemy" || fireball.TargetType == "all" {
+						for _, enemy := range zone.Enemies {
+							if enemy.GetID() == e.GetID() {
+								continue
+							}
+							dx := enemy.GetX() - e.GetX()
+							dy := enemy.GetY() - e.GetY()
+							dist := float32(math.Sqrt(float64(dx*dx + dy*dy)))
+							if dist <= fireball.Range && dist < targetDist {
+								target = enemy
+								targetDist = dist
+								targetID = enemy.GetID()
+							}
+						}
+					}
+
+					// If a target is found, set the impact position and send a telegraph warning
+					if target != nil {
+						fireball.SetImpactPosition(target.GetX(), target.GetY(), targetID)
+						messages = append(messages, Message{
+							Type: "telegraphWarning",
+							Data: map[string]interface{}{
+								"ability":  "Fireball",
+								"casterId": e.GetID(),
+								"targetId": targetID,
+								"impactX":  target.GetX(),
+								"impactY":  target.GetY(),
+								"radius":   fireball.Radius,
+								"duration": e.StateDuration.Milliseconds(),
+							},
+						})
+					}
+				}
 			}
-			zone.Mu.RUnlock()
+		} else {
+			// Move toward the player
+			dx := nearestPlayer.X - e.X
+			dy := nearestPlayer.Y - e.Y
+			mag := float32(math.Sqrt(float64(dx*dx + dy*dy)))
+			if mag > 0 {
+				e.VX = (dx / mag) * 150 // Move faster than Roam
+				e.VY = (dy / mag) * 150
+			}
+		}
+
+	case "Telegraph":
+		if time.Since(e.StateStartTime) >= e.StateDuration {
+			e.State = "Attack"
+			e.StateStartTime = time.Now()
+			e.StateDuration = e.AttackDuration
+			log.Println("Attack")
+			// Execute the ability if it exists
+			if e.Ability != nil {
+				messages = append(messages, e.Ability.Execute(e, gs, zone)...)
+				log.Println(messages)
+			} else {
+				log.Printf("Enemy %s has no ability to execute", e.ID)
+			}
+		}
+
+	case "Attack":
+		if time.Since(e.StateStartTime) >= e.StateDuration {
+			e.State = "Cooldown"
+			e.StateStartTime = time.Now()
+			log.Println("Cooldwon")
+			// Use the ability's cooldown for the Cooldown state duration
+			if e.Ability != nil {
+				e.StateDuration = e.Ability.GetCooldown()
+			} else {
+				// Fallback duration if no ability is set
+				e.StateDuration = 1 * time.Second
+				log.Printf("Enemy %s has no ability; using default cooldown of 1 second", e.ID)
+			}
+		}
+
+	case "Cooldown":
+		if time.Since(e.StateStartTime) >= e.StateDuration {
+			nearestPlayer, dist := e.findNearestPlayer(zone)
+			if nearestPlayer != nil && dist <= e.TelegraphTriggerRadius {
+				e.State = "Telegraph"
+				e.StateStartTime = time.Now()
+				e.StateDuration = e.TelegraphDuration
+				log.Println("Telegraph")
+			} else if nearestPlayer != nil && dist <= e.PursueTriggerRadius {
+				e.State = "Pursue"
+				e.StateStartTime = time.Now()
+				e.StateDuration = 0
+				log.Println("Pursue")
+			} else {
+				e.State = "Roam"
+				e.StateStartTime = time.Now()
+				e.StateDuration = 0
+				log.Println("Roam")
+			}
+		}
+
+	case "Death":
+		if time.Since(e.StateStartTime) >= e.StateDuration {
+			// Enemy is fully dead, award XP to nearby players
+			for _, player := range zone.Players {
+				dx := player.X - e.X
+				dy := player.Y - e.Y
+				if float32(math.Sqrt(float64(dx*dx+dy*dy))) <= 500 { // Arbitrary XP award radius
+					xpAward := 10 // Adjust based on enemy type
+					switch e.Type {
+					case "easy":
+						xpAward = 10
+					case "medium":
+						xpAward = 20
+					case "hard":
+						xpAward = 50
+					}
+					addPlayerXP(player, xpAward)
+				}
+			}
+			return messages, false // Remove enemy
 		}
 	}
+
+	// Update position
+	dt := float32(TickInterval.Seconds())
+	e.X += e.VX * dt
+	e.Y += e.VY * dt
+
+	// Keep enemy within zone bounds
+	if e.X < zone.WorldX {
+		e.X = zone.WorldX
+		e.VX = -e.VX * 0.5 // Reduce speed on bounce to prevent oscillation
+	}
+	if e.X > zone.WorldX+float32(ZoneWidthPixels) {
+		e.X = zone.WorldX + float32(ZoneWidthPixels)
+		e.VX = -e.VX * 0.5
+	}
+	if e.Y < zone.WorldY {
+		e.Y = zone.WorldY
+		e.VY = -e.VY * 0.5
+	}
+	if e.Y > zone.WorldY+float32(ZoneHeightPixels) {
+		e.Y = zone.WorldY + float32(ZoneHeightPixels)
+		e.VY = -e.VY * 0.5
+	}
+
+	return messages, true // Keep the enemy alive
 }
 
-func updateRoamState(e *Enemy, deltaTime float32) {
-	e.Mu.Lock()
-	defer e.Mu.Unlock()
-	if rand.Float32() < 0.05 {
-		angle := rand.Float32() * 2 * math.Pi
-		e.VelocityX = e.RoamSpeed * float32(math.Cos(float64(angle)))
-		e.VelocityY = e.RoamSpeed * float32(math.Sin(float64(angle)))
-	}
-	maxDistance := float32(5 * 32)
-	dx := e.X - e.SpawnPointX
-	dy := e.Y - e.SpawnPointY
-	dist := float32(math.Sqrt(float64(dx*dx + dy*dy)))
-	if dist > maxDistance {
-		angle := float32(math.Atan2(float64(-dy), float64(-dx)))
-		e.VelocityX = e.RoamSpeed * float32(math.Cos(float64(angle)))
-		e.VelocityY = e.RoamSpeed * float32(math.Sin(float64(angle)))
-	}
-	antiClump(e, 100)
-}
+// findNearestPlayer finds the nearest player to the enemy
+func (e *Enemy) findNearestPlayer(zone *Zone) (*Player, float32) {
+	var nearestPlayer *Player
+	var minDist float32 = math.MaxFloat32
 
-func updatePursueState(e *Enemy, target *Player, deltaTime float32) {
-	e.Mu.Lock()
-	defer e.Mu.Unlock()
-	if target == nil {
-		e.VelocityX = 0
-		e.VelocityY = 0
-		return
-	}
-	dx := target.X - e.X
-	dy := target.Y - e.Y
-	dist := float32(math.Sqrt(float64(dx*dx + dy*dy)))
-	if dist > 0 {
-		e.VelocityX = (dx / dist) * e.RoamSpeed * 1.5
-		e.VelocityY = (dy / dist) * e.RoamSpeed * 1.5
-	}
-	antiClump(e, 100)
-}
-
-func findNearestPlayer(e *Enemy) *Player {
-	zone := zones[e.ZoneID]
-	zone.Mu.RLock()
-	defer zone.Mu.RUnlock()
-	var nearest *Player
-	minDist := float32(math.MaxFloat32)
-	for _, p := range zone.Players {
-		dist := distanceTo(e, p)
+	for _, player := range zone.Players {
+		dx := player.X - e.X
+		dy := player.Y - e.Y
+		dist := float32(math.Sqrt(float64(dx*dx + dy*dy)))
 		if dist < minDist {
 			minDist = dist
-			nearest = p
+			nearestPlayer = player
 		}
 	}
-	return nearest
+
+	return nearestPlayer, minDist
 }
-
-func distanceTo(e *Enemy, p *Player) float32 {
-	dx := e.X - p.X
-	dy := e.Y - p.Y
-	return float32(math.Sqrt(float64(dx*dx + dy*dy)))
-}
-
-func antiClump(e *Enemy, strength float32) {
-	const minSeparation = 64
-	const checkRadius = 128
-	zone := zones[e.ZoneID]
-	zone.Mu.RLock()
-	defer zone.Mu.RUnlock()
-
-	gridSize := 128
-	gridX := int(e.X / float32(gridSize))
-	gridY := int(e.Y / float32(gridSize))
-
-	e.Mu.Lock()
-	defer e.Mu.Unlock()
-	for _, other := range zone.Enemies {
-		if other == e || !other.IsAlive {
-			continue
-		}
-		otherGridX := int(other.X / float32(gridSize))
-		otherGridY := int(other.Y / float32(gridSize))
-		if (otherGridX < gridX-1 || otherGridX > gridX+1) || (otherGridY < gridY-1 || otherGridY > gridY+1) {
-			dx := e.X - other.X
-			dy := e.Y - other.Y
-			roughDist := float32(math.Sqrt(float64(dx*dx + dy*dy)))
-			if roughDist > checkRadius {
-				continue
-			}
-		}
-		dx := e.X - other.X
-		dy := e.Y - other.Y
-		dist := float32(math.Sqrt(float64(dx*dx + dy*dy)))
-		if dist < minSeparation && dist > 0 {
-			force := strength * (minSeparation - dist) / minSeparation
-			e.VelocityX += (dx / dist) * force
-			e.VelocityY += (dy / dist) * force
-		}
-	}
-	maxSpeed := e.RoamSpeed * 1.5
-	totalSpeed := float32(math.Sqrt(float64(e.VelocityX*e.VelocityX + e.VelocityY*e.VelocityY)))
-	if totalSpeed > maxSpeed {
-		e.VelocityX = (e.VelocityX / totalSpeed) * maxSpeed
-		e.VelocityY = (e.VelocityY / totalSpeed) * maxSpeed
-	}
-}
-*/
