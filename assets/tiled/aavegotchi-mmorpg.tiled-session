@@ -30,6 +30,20 @@
         "/Users/slickgotchi/Projects/aavegotchi-mmorpg/assets/tilesets/tileset.tsx": {
             "scaleInDock": 0.9453,
             "scaleInEditor": 1
+        },
+        "/Users/slickgotchi/Projects/aavegotchi-mmorpg/shared/tilemap/maps/yield_fields_1.tmx": {
+            "scale": 0.5,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 4166,
+                "y": 3650
+            }
+        },
+        "/Users/slickgotchi/Projects/aavegotchi-mmorpg/shared/tilemap/maps/yield_fields_1.tmx#terrain": {
+            "scaleInDock": 0.75
+        },
+        "/Users/slickgotchi/Projects/aavegotchi-mmorpg/shared/tilemap/maps/yield_fields_1.tmx#tileset": {
+            "scaleInDock": 0.33
         }
     },
     "last.exportedFilePath": "/Users/slickgotchi/Projects/aavegotchi-mmorpg/shared/tilemap/maps",
@@ -44,6 +58,7 @@
     "project": "aavegotchi-mmorpg.tiled-project",
     "property.type": "int",
     "recentFiles": [
+        "/Users/slickgotchi/Projects/aavegotchi-mmorpg/shared/tilemap/maps/yield_fields_1.tmx",
         "/Users/slickgotchi/Projects/aavegotchi-mmorpg/assets/tilemaps/mmorpg.tmx",
         "/Users/slickgotchi/Projects/aavegotchi-mmorpg/assets/tilesets/tileset.tsx"
     ],
