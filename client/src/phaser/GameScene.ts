@@ -4,7 +4,7 @@ import { fetchGotchiSVGs, Aavegotchi } from './FetchGotchis';
 const GAME_WIDTH = 1920;
 const GAME_HEIGHT = 1200;
 const MAX_POSITION_BUFFER_LENGTH = 10;
-const MAX_CONCURRENT_ENEMIES = 10000;
+const MAX_CONCURRENT_ENEMIES = 1000;
 
 // Reduced for faster response; adjust as needed
 // note a higher value (200) can smooth out crossing over zone boundaries
@@ -68,6 +68,9 @@ export interface PoolManager {
         shadow: Phaser.GameObjects.Group,
         statBar: Phaser.GameObjects.Group,
         flashSprite: Phaser.GameObjects.Group,
+    },
+    vfx: {
+        circle: Phaser.GameObjects.Group,
     }
 }
 
@@ -97,7 +100,6 @@ export class GameScene extends Phaser.Scene {
     private ws!: WebSocket;
     private keys!: { W: Phaser.Input.Keyboard.Key; A: Phaser.Input.Keyboard.Key; S: Phaser.Input.Keyboard.Key; D: Phaser.Input.Keyboard.Key; SPACE: Phaser.Input.Keyboard.Key };
     private tickTimer = 0;
-    private circlePool: Phaser.GameObjects.Graphics[] = [];
     private textPool: Phaser.GameObjects.Text[] = [];
     private isConnected = false;
     private keyState = { W: false, A: false, S: false, D: false, SPACE: false };
@@ -237,6 +239,19 @@ export class GameScene extends Phaser.Scene {
         });
         enemyFlashSpritePool.createMultiple({ key: 'enemies', quantity: MAX_CONCURRENT_ENEMIES, active: false, visible: false });
 
+        // create circle pools
+        var circlePool = this.add.group({
+            maxSize: 300,
+            classType: Phaser.GameObjects.Arc,
+            createCallback: circleGameObject => {
+                var circle = circleGameObject as Phaser.GameObjects.Arc;
+                circle.setActive(false);
+                circle.setVisible(false);
+                circle.setRadius(1);
+                circle.setFillStyle(0xffffff, 1)
+            }
+        });
+        circlePool.createMultiple({key: "", quantity: 300, active: false, visible: false });
 
         // add all pools to the overall pool list
         this.pools = {
@@ -245,6 +260,9 @@ export class GameScene extends Phaser.Scene {
                 shadow: enemyShadowPool,
                 statBar: enemyStatBarPool,
                 flashSprite: enemyFlashSpritePool,
+            },
+            vfx: {
+                circle: circlePool,
             }
         }
 
@@ -1064,17 +1082,6 @@ export class GameScene extends Phaser.Scene {
     //     }
     // }
 
-    // updateEnemyHP(id: string) {
-    //     if (this.enemies[id]) {
-    //         const enemy = this.enemies[id];
-    //         if (enemy.hp <= 0) {
-    //             this.removeEnemy(id);
-    //         } else {
-    //             // enemy.hpBar?.width = 32 * (enemy.hp / enemy.maxHp);
-    //         }
-    //     }
-    // }
-
     showFireballTelegraphWarning(x: number, y: number, radius: number, duration_ms: number, casterType: 'enemy' | 'player') {
         const attackColor = casterType === "player" ? 0xffffff : 0x7a09fa;
 
@@ -1082,7 +1089,6 @@ export class GameScene extends Phaser.Scene {
         const circle = this.add.circle(x, y, radius, attackColor);
         circle.setAlpha(0).setVisible(true).setDepth(901);
         circle.setPosition(x,y);
-        console.log(circle);
 
         this.tweens.add({
             targets: circle,
@@ -1106,7 +1112,10 @@ export class GameScene extends Phaser.Scene {
         const radius = casterType == "player" ? 100 : 70;
         const attackColor = casterType === "player" ? 0xffffff : 0xff0000;
 
-        const circle = this.getPooledCircle(x, y, radius, attackColor);
+        const circle = this.pools.vfx.circle.get();
+        circle.setPosition(x,y);
+        circle.setRadius(radius);
+        circle.setFillStyle(attackColor);
         circle.setAlpha(0.5).setVisible(true).setDepth(900);
 
         const rectWidth = radius;
@@ -1131,6 +1140,7 @@ export class GameScene extends Phaser.Scene {
             duration: 250,
             onComplete: () => {
                 circle.setVisible(false);
+                this.pools.vfx.circle.killAndHide(circle);
                 container.destroy();
             },
         });
@@ -1142,7 +1152,10 @@ export class GameScene extends Phaser.Scene {
         const y = data.y;
         const attackColor = data.type === "playerAttack" ? 0xffffff : 0xff0000;
 
-        const circle = this.getPooledCircle(x, y, radius, attackColor);
+        const circle = this.pools.vfx.circle.get();
+        circle.setPosition(x,y);
+        circle.setRadius(radius);
+        circle.setFillStyle(attackColor);
         circle.setAlpha(0.5).setVisible(true).setDepth(900);
 
         const rectWidth = radius;
@@ -1167,6 +1180,7 @@ export class GameScene extends Phaser.Scene {
             duration: 250,
             onComplete: () => {
                 circle.setVisible(false);
+                this.pools.vfx.circle.killAndHide(circle);
                 container.destroy();
             },
         });
@@ -1414,19 +1428,19 @@ export class GameScene extends Phaser.Scene {
 
     }
 
-    getPooledCircle(x: number, y: number, radius: number, color: number): Phaser.GameObjects.Graphics {
-        let circle = this.circlePool.find(c => !c.visible);
-        if (!circle) {
-            circle = this.add.graphics();
-            this.circlePool.push(circle);
-        } else {
-            circle.clear();
-            circle.setVisible(true);
-        }
-        circle.fillStyle(color, 0.5);
-        circle.fillCircle(x, y, radius);
-        return circle;
-    }
+    // getPooledCircle(x: number, y: number, radius: number, color: number): Phaser.GameObjects.Graphics {
+    //     let circle = this.circlePool.find(c => !c.visible);
+    //     if (!circle) {
+    //         circle = this.add.graphics();
+    //         this.circlePool.push(circle);
+    //     } else {
+    //         circle.clear();
+    //         circle.setVisible(true);
+    //     }
+    //     circle.fillStyle(color, 0.5);
+    //     circle.fillCircle(x, y, radius);
+    //     return circle;
+    // }
 
     getPooledText(x: number, y: number, text: string): Phaser.GameObjects.Text {
         let damageText = this.textPool.find(t => !t.visible);

@@ -344,17 +344,17 @@ func (e *Enemy) UpdateEnemy(gs *GameServer, zone *Zone) ([]Message, bool) {
 // findNearestPlayer finds the nearest player to the enemy
 func (e *Enemy) findNearestPlayer(zone *Zone) (*Player, float32) {
 	var nearestPlayer *Player
-	var minDist float32 = math.MaxFloat32
+	var minDistSq float32 = math.MaxFloat32
 
 	for _, player := range zone.Players {
 		dx := player.X - e.X
 		dy := player.Y - e.Y
-		dist := float32(math.Sqrt(float64(dx*dx + dy*dy)))
-		if dist < minDist {
-			minDist = dist
+		distSq := float32(dx*dx + dy*dy)
+		if distSq < minDistSq {
+			minDistSq = distSq
 			nearestPlayer = player
 		}
 	}
 
-	return nearestPlayer, minDist
+	return nearestPlayer, float32(math.Sqrt(float64(minDistSq)))
 }

@@ -24,7 +24,7 @@ const (
 	ZoneWidthPixels   = 256 * 32 // Tiles
 	ZoneHeightPixels  = 256 * 32 // Tiles
 	TileSize          = 32       // Pixels
-	NumEnemiesPerZone = 250
+	NumEnemiesPerZone = 50
 	PlayerMoveSpeed   = 6.22 * 32
 )
 
