@@ -40,7 +40,7 @@ var World = WorldConfig{
 	// for logic code on the server side we will append the ".json" and parse
 	TilemapGrid: [][]string{
 		{"", "default", "default", "default"},
-		{"default", "default", "default", "default"},
+		{"default", "yield_fields_1", "default", "default"},
 		{"default", "default", "default", "default"},
 		{"default", "default", "default", "default"},
 	},

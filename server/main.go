@@ -24,7 +24,7 @@ const (
 	ZoneWidthPixels   = 256 * 32 // Tiles
 	ZoneHeightPixels  = 256 * 32 // Tiles
 	TileSize          = 32       // Pixels
-	NumEnemiesPerZone = 100
+	NumEnemiesPerZone = 250
 	PlayerMoveSpeed   = 6.22 * 32
 )
 
@@ -106,7 +106,7 @@ type EnemyUpdate struct {
 	Timestamp int64   `json:"timestamp"`
 
 	Type      string `json:"type"`
-	Direction int    `json:"int"`
+	Direction int    `json:"direction"`
 
 	MaxHP int `json:"maxHp"`
 	HP    int `json:"hp"`
@@ -172,6 +172,7 @@ func NewGameServer() *GameServer {
 			} else {
 				enemyType = "hard"
 			}
+			// enemyType = "hard"
 			localX := float32(rand.Intn(ZoneWidthPixels))
 			localY := float32(rand.Intn(ZoneHeightPixels))
 			if localX < 0.6*float32(ZoneWidthPixels) && localX > 0.4*float32(ZoneWidthPixels) &&
@@ -309,15 +310,17 @@ func (gs *GameServer) getActiveZones(player *Player) ActiveZoneList {
 }
 
 func (gs *GameServer) processZone(zone *Zone) {
-	// Process inbound messages for players
-	var allAbilityMessages []Message
+	// we store all messages from function sub-logic in this array
+	// so they can each be individually batched into main message batch later
+	var allPendingMessages []Message
 
+	// Process inbound messages for players
 	for len(zone.Inbound) > 0 {
 		msg := <-zone.Inbound
 		if player, exists := zone.Players[msg.PlayerID]; exists {
 			messages := player.HandleInput(msg, gs, zone)
 			if messages != nil {
-				allAbilityMessages = append(allAbilityMessages, messages...)
+				allPendingMessages = append(allPendingMessages, messages...)
 			}
 		} else {
 			log.Printf("Player %s not found in zone %d", msg.PlayerID, zone.ID)
@@ -329,7 +332,7 @@ func (gs *GameServer) processZone(zone *Zone) {
 	for _, player := range zone.Players {
 		messages := player.UpdatePlayer(gs, zone, dt)
 		if messages != nil {
-			allAbilityMessages = append(allAbilityMessages, messages...)
+			allPendingMessages = append(allPendingMessages, messages...)
 		}
 	}
 
@@ -337,7 +340,7 @@ func (gs *GameServer) processZone(zone *Zone) {
 	for enemyID, enemy := range zone.Enemies {
 		messages, keep := enemy.UpdateEnemy(gs, zone)
 		if messages != nil {
-			allAbilityMessages = append(allAbilityMessages, messages...)
+			allPendingMessages = append(allPendingMessages, messages...)
 		}
 		if !keep {
 			delete(zone.Enemies, enemyID)
@@ -349,8 +352,11 @@ func (gs *GameServer) processZone(zone *Zone) {
 	for _, player := range zone.Players {
 		activeZones := gs.getActiveZones(player)
 
-		var allPlayerUpdates []PlayerUpdate
-		var allEnemyUpdates []EnemyUpdate
+		// add active zones to pending messages
+		allPendingMessages = append(allPendingMessages, Message{
+			Type: "activeZones",
+			Data: activeZones,
+		})
 
 		// Collect updates from all 4 active zones
 		activeZoneIDs := []int{activeZones.CurrentZoneID, activeZones.XAxisZoneID, activeZones.YAxisZoneID, activeZones.DiagonalZoneID}
@@ -365,50 +371,57 @@ func (gs *GameServer) processZone(zone *Zone) {
 			}
 
 			for _, p := range targetZone.Players {
-				allPlayerUpdates = append(allPlayerUpdates, PlayerUpdate{
-					PlayerID:  p.ID,
-					X:         p.X,
-					Y:         p.Y,
-					ZoneID:    p.ZoneID,
-					Timestamp: timestamp,
+				allPendingMessages = append(allPendingMessages, Message{
+					Type: "playerUpdate",
+					Data: PlayerUpdate{
+						PlayerID:  p.ID,
+						X:         p.X,
+						Y:         p.Y,
+						ZoneID:    p.ZoneID,
+						Timestamp: timestamp,
 
-					MaxHP: p.Stats.MaxHP,
-					HP:    p.Stats.HP,
-					MaxAP: p.Stats.MaxAP,
-					AP:    p.Stats.AP,
+						MaxHP: p.Stats.MaxHP,
+						HP:    p.Stats.HP,
+						MaxAP: p.Stats.MaxAP,
+						AP:    p.Stats.AP,
 
-					GameXP:                  p.GameXP,
-					GameLevel:               p.GameLevel,
-					GameXPOnCurrentLevel:    p.GameXPOnCurrentLevel,
-					GameXPTotalForNextLevel: p.GameXPTotalForNextLevel,
+						GameXP:                  p.GameXP,
+						GameLevel:               p.GameLevel,
+						GameXPOnCurrentLevel:    p.GameXPOnCurrentLevel,
+						GameXPTotalForNextLevel: p.GameXPTotalForNextLevel,
+					},
 				})
 			}
 			for _, e := range targetZone.Enemies {
-				allEnemyUpdates = append(allEnemyUpdates, EnemyUpdate{
-					EnemyID:   e.ID,
-					X:         e.X,
-					Y:         e.Y,
-					ZoneID:    e.ZoneID,
-					Timestamp: timestamp,
-					Type:      e.Type,
-					Direction: e.Direction,
+				allPendingMessages = append(allPendingMessages, Message{
+					Type: "enemyUpdate",
+					Data: EnemyUpdate{
+						EnemyID:   e.ID,
+						X:         e.X,
+						Y:         e.Y,
+						ZoneID:    e.ZoneID,
+						Timestamp: timestamp,
+						Type:      e.Type,
+						Direction: e.Direction,
 
-					MaxHP: e.Stats.MaxHP,
-					HP:    e.Stats.HP,
+						MaxHP: e.Stats.MaxHP,
+						HP:    e.Stats.HP,
+					},
 				})
 			}
 		}
 
-		// Send batched messages as a single array
-		batch := []Message{
-			{Type: "activeZones", Data: activeZones},
-			{Type: "playerUpdates", Data: allPlayerUpdates},
-			{Type: "enemyUpdates", Data: allEnemyUpdates},
+		// Append each message directly to the batch for processing
+		var batch []Message
+		for _, pendingMsg := range allPendingMessages {
+			// Ensure the message has a valid Type (e.g., "abilityEffect", "telegraphWarning")
+			if pendingMsg.Type != "" {
+				batch = append(batch, pendingMsg)
+			} else {
+				log.Printf("Warning: Skipping pending message with empty Type: %v", pendingMsg)
+			}
 		}
-		if len(allAbilityMessages) > 0 {
-			// log.Println("append abilityEffects at timestamp: ", timestamp)
-			batch = append(batch, Message{Type: "abilityEffects", Data: allAbilityMessages})
-		}
+
 		if err := player.Conn.WriteJSON(batch); err != nil {
 			log.Printf("Error sending batch to %s: %v", player.ID, err)
 		}

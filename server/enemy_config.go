@@ -49,7 +49,7 @@ var EnemyConfigs = map[string]EnemyConfig{
 		PursueTriggerRadius:    8 * TileSize,
 		TelegraphTriggerRadius: 6 * TileSize,
 		SpawnDuration:          1 * time.Second,
-		TelegraphDuration:      500 * time.Millisecond,
+		TelegraphDuration:      1000 * time.Millisecond,
 		AttackDuration:         500 * time.Millisecond,
 		DeathDuration:          1 * time.Second,
 		AbilityName:            "Fireball",

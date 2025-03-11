@@ -51,7 +51,7 @@ func NewHammerSwingForCaster(caster Entity) *HammerSwing {
 	isEnemy := len(caster.GetID()) >= 5 && caster.GetID()[:5] == "enemy"
 
 	if isEnemy {
-		log.Println("enemy HammerSwing")
+		// log.Println("enemy HammerSwing")
 		return NewHammerSwing(
 			10,       // Damage
 			70,       // Radius (smaller than player's)
@@ -59,7 +59,7 @@ func NewHammerSwingForCaster(caster Entity) *HammerSwing {
 			time.Duration(2000)*time.Millisecond,
 		)
 	} else {
-		log.Println("player HammerSwing")
+		// log.Println("player HammerSwing")
 		return NewHammerSwing(
 			15,      // Damage
 			100,     // Radius
@@ -98,7 +98,7 @@ func (hs *HammerSwing) Execute(caster Entity, gs *GameServer, zone *Zone) []Mess
 			"radius":   hs.Radius,
 		},
 	})
-	log.Println("pos of attack ", casterY, ", pos of caster", caster.GetY())
+	// log.Println("pos of attack ", casterY, ", pos of caster", caster.GetY())
 
 	// ENEMY ATTACKS
 	// Apply damage to targets within range (no additional messages for hits)
@@ -181,7 +181,7 @@ func NewFireballForCaster(caster Entity) *Fireball {
 	if isEnemy {
 		return NewFireball(
 			20,       // Damage
-			25,       // Radius at impact
+			50,       // Radius at impact
 			300,      // Maximum targeting range
 			"player", // Targets players only
 		)

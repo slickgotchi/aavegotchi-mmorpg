@@ -20,6 +20,7 @@ export interface PositionUpdate {
 
 export interface Player {
     bodySprite: Phaser.GameObjects.Sprite;
+    flashSprite: Phaser.GameObjects.Sprite;
     gotchiId: number;
     isAssignedSVG: boolean;
     positionBuffer: PositionUpdate[];
@@ -47,6 +48,7 @@ export interface TilemapProperty {
 export interface Enemy {
     bodySprite: Phaser.GameObjects.Sprite | null;
     shadowSprite: Phaser.GameObjects.Sprite | null;
+    flashSprite: Phaser.GameObjects.Sprite | null;
     hpBar: Phaser.GameObjects.Rectangle | null;
 
     type: string;
@@ -65,6 +67,7 @@ export interface PoolManager {
         body: Phaser.GameObjects.Group,
         shadow: Phaser.GameObjects.Group,
         statBar: Phaser.GameObjects.Group,
+        flashSprite: Phaser.GameObjects.Group,
     }
 }
 
@@ -122,8 +125,10 @@ export class GameScene extends Phaser.Scene {
     preload() {
         // TILEMAPPING
         this.load.image('tileset', 'assets/tilemap/tileset.png');
+        this.load.image('terrain', 'assets/tilemap/tilesets/terrain.png');
         this.load.tilemapTiledJSON('mmorpg', 'assets/tilemap/mmorpg.json');
         this.load.tilemapTiledJSON('default', 'assets/tilemap/default.json');
+        this.load.tilemapTiledJSON('yield_fields_1', 'assets/tilemap/maps/yield_fields_1.json')
 
         // FONTS
         this.load.font('Pixelar', 'assets/fonts/pixelar/PixelarRegular.ttf');
@@ -213,6 +218,24 @@ export class GameScene extends Phaser.Scene {
             visible: false
         });
 
+        // Initialize flashSprite pool
+        var enemyFlashSpritePool = this.add.group({
+            maxSize: MAX_CONCURRENT_ENEMIES,
+            classType: Phaser.GameObjects.Sprite,
+            createCallback: flashSpriteGameObject => {
+                var flashSprite = flashSpriteGameObject as Phaser.GameObjects.Sprite;
+                flashSprite.setTexture('enemies'); // Single texture atlas for all shadows
+                flashSprite.setVisible(false); // Hidden until assigned
+                flashSprite.setActive(false); // Inactive until assigned
+                flashSprite.setDepth(502);
+                flashSprite.setAlpha(0);
+                flashSprite.setFrame('easy.png');
+                flashSprite.setScale(1);
+                flashSprite.setOrigin(0.5, 1);
+                flashSprite.setTintFill(0xffffff);
+            }
+        });
+        enemyFlashSpritePool.createMultiple({ key: 'enemies', quantity: MAX_CONCURRENT_ENEMIES, active: false, visible: false });
 
 
         // add all pools to the overall pool list
@@ -221,6 +244,7 @@ export class GameScene extends Phaser.Scene {
                 body: enemyBodyPool,
                 shadow: enemyShadowPool,
                 statBar: enemyStatBarPool,
+                flashSprite: enemyFlashSpritePool,
             }
         }
 
@@ -234,6 +258,11 @@ export class GameScene extends Phaser.Scene {
 
             this.ws.onmessage = (event) => {
                 const messages = JSON.parse(event.data);
+                if (!Array.isArray(messages)) {
+                    console.error("Unexpected WebSocket message format:", messages);
+                    return; // Stop execution if it's not an array
+                }
+
                 messages.forEach((msg:any) => {
                     switch (msg.type){
                         case 'welcome':
@@ -242,24 +271,32 @@ export class GameScene extends Phaser.Scene {
                         case 'activeZones':
                             this.handleActiveZoneList(msg.data);
                             break;
-                        case 'playerUpdates':
-                            msg.data.forEach((update:any) => {
-                                this.addOrUpdatePlayer(update);
-                            });
+                        // case 'playerUpdates':
+                        //     msg.data.forEach((update:any) => {
+                        //         this.addOrUpdatePlayer(update);
+                        //     });
+                        // break;
+                        // case 'enemyUpdates':
+                        //     msg.data.forEach((update:any) => {
+                        //         this.addOrUpdateEnemy(update);
+                        //     });
+                        //     break;
+                        case 'playerUpdate':
+                            this.addOrUpdatePlayer(msg.data);
                         break;
-
-                        case 'enemyUpdates':
-                            msg.data.forEach((update:any) => {
-                                this.addOrUpdateEnemy(update);
-                            });
+                        case 'enemyUpdate':
+                            this.addOrUpdateEnemy(msg.data);
                             break;
-                        case `abilityEffects`:
-                            msg.data.forEach((datum:any) => {
-                                this.handleAbilityEffect(datum);
-                            })
+                        case `abilityEffect`:
+                            this.handleAbilityEffect(msg.data);
+                            break;
+                        case `telegraphWarning`:
+                            this.handleTelegraphWarning(msg.data);
                         break;
 
-                        default: break;
+                        default: 
+                            console.log("No event handler for: ", msg);
+                        break;
                     }
 
                     this.rezoneBatchCounter = 0;
@@ -277,26 +314,41 @@ export class GameScene extends Phaser.Scene {
         window.addEventListener('resize', () => this.resizeGame());
     }
 
+    handleTelegraphWarning(telegraphWarning: any) {
+        const { ability, casterId, targetId, impactX, impactY, radius, duration } = telegraphWarning;
+
+        var player = this.players[casterId];
+        var enemy = this.enemies[casterId];
+
+        if (player) {
+
+        }
+        else if (enemy) {
+            this.showFireballTelegraphWarning(impactX, impactY, radius, duration, "enemy");
+        }
+    }
+
     handleAbilityEffect(abilityEffect: any){
-        const { data, type } = abilityEffect;
-        const {ability, casterId, damage, hp, targetId, impactX, impactY } = data;
-        console.log(data);
+        const {ability, casterId, damage, hp, targetId, impactX, impactY } = abilityEffect;
+        // console.log(data);
         switch (ability){
             case "HammerSwing":
                 var enemy = this.enemies[casterId];
                 var player = this.players[casterId];
                 if (enemy && enemy.bodySprite){
-                    console.log("showHammerSwing()");
+                    // console.log("showHammerSwing()");
                     this.showHammerSwing(impactX, impactY, 'enemy');
                 }
                 else if (player && player.bodySprite){
-                    console.log("showHammerSwing() for player");
+                    // console.log("showHammerSwing() for player");
                     this.showHammerSwing(impactX, impactY, 'player');
                 }
             break;
             default: break;
         }
     }
+
+
 
     handleWelcome(datum: any) {
         const { playerId, zones } = datum;
@@ -378,6 +430,10 @@ export class GameScene extends Phaser.Scene {
                     if (enemy.shadowSprite) {
                         this.pools.enemy.shadow.killAndHide(enemy.shadowSprite);
                         enemy.shadowSprite = null;
+                    }
+                    if (enemy.flashSprite) {
+                        this.pools.enemy.flashSprite.killAndHide(enemy.flashSprite);
+                        enemy.flashSprite = null;
                     }
                     if (enemy.hpBar) {
                         this.pools.enemy.statBar.killAndHide(enemy.hpBar);
@@ -518,11 +574,20 @@ export class GameScene extends Phaser.Scene {
         if (!this.players[playerId]){
             const newPlayerSprite = this.add.sprite(x, y, 'gotchi_placeholder')
                 .setDepth(1000)
-                .setScale(1)
+                .setScale(0.75)
                 .setOrigin(0.5,1)
+
+            const flashSprite = this.add.sprite(x, y, 'gotchi_placeholder')
+                .setDepth(1001)
+                .setScale(0.75)
+                .setOrigin(0.5,1)
+                .setTintFill(0xf5555d)
+                .setAlpha(0)
+                .setVisible(true);
 
             this.players[playerId] = {
                 bodySprite: newPlayerSprite,
+                flashSprite: flashSprite,
                 gotchiId: 0,
                 isAssignedSVG: false,
                 positionBuffer: [],
@@ -572,6 +637,10 @@ export class GameScene extends Phaser.Scene {
             if (player.hp < player.previousHp){
                 if (this.isPlayerOnScreen(player)){
                     this.showDamageToPlayerPopupText(player.previousHp - player.hp, playerId);
+                    if (player.flashSprite) {
+                         this.alphaFlashSprite(player.flashSprite);
+                    }
+
                 }
                 player.previousHp = player.hp;
             }
@@ -639,6 +708,10 @@ export class GameScene extends Phaser.Scene {
                     this.pools.enemy.shadow.killAndHide(enemy.shadowSprite);
                     enemy.shadowSprite = null;
                 }
+                if (enemy.flashSprite) {
+                    this.pools.enemy.flashSprite.killAndHide(enemy.flashSprite);
+                    enemy.flashSprite = null;
+                }
                 if (enemy.hpBar) {
                     this.pools.enemy.statBar.killAndHide(enemy.hpBar);
                     enemy.hpBar = null;
@@ -694,6 +767,7 @@ export class GameScene extends Phaser.Scene {
 */
 
     addOrUpdateEnemy(data: any) {
+        // console.log(data);
         const {enemyId, x, y, zoneId, timestamp, type, maxHp, hp } = data;
 
         // see if the received enemy is part of one of the active zones
@@ -713,17 +787,27 @@ export class GameScene extends Phaser.Scene {
         if ((!enemy || !hasPoolSprites) && hp > 0) {
             this.rezoneBatchCounter++;
 
+            // console.log(data);
+
             const bodySprite = this.pools.enemy.body.get();
             if (bodySprite) {
                 bodySprite.setVisible(true)
-                .setActive(true)
-                .setFrame(`${type}.png`);
+                    .setActive(true)
+                    .setFrame(`${type}.png`);
             }
 
             const shadowSprite = this.pools.enemy.shadow.get();
             if (shadowSprite){
+                // console.log("show shadow sprite");
                 shadowSprite.setVisible(true)
                     .setActive(true)
+            }
+
+            const flashSprite = this.pools.enemy.flashSprite.get();
+            if (flashSprite) {
+                flashSprite.setVisible(true)
+                    .setActive(true)
+                    .setFrame(`${type}.png`)
             }
 
             const hpBar = this.pools.enemy.statBar.get();
@@ -736,6 +820,7 @@ export class GameScene extends Phaser.Scene {
                 this.enemies[enemyId] = {
                     bodySprite,
                     shadowSprite,
+                    flashSprite,
                     hpBar,
                     type: type,
                     positionBuffer: [],
@@ -767,16 +852,20 @@ export class GameScene extends Phaser.Scene {
             enemy.maxHp = maxHp;
             enemy.hp = hp;
 
+            // update hp bar
+            if (enemy.hpBar) {
+                enemy.hpBar.width = 32 * hp / maxHp;
+            }
+
             if (data.direction !== undefined) {
                 enemy.direction = data.direction;
             }
 
             // check for damage update
             if (enemy.hp < enemy.previousHp) {
-                console.log("damaged enemy!", enemy.hp, " ", enemy.previousHp);
                 if (this.isEnemyOnScreen(enemy)) {
-                    console.log("show enemy damage")
                     this.showDamageToEnemyPopupText(enemy.previousHp - enemy.hp, enemyId);
+                    if (enemy.flashSprite) this.alphaFlashSprite(enemy.flashSprite);
                 } 
                 enemy.previousHp = enemy.hp;
             }
@@ -812,12 +901,27 @@ export class GameScene extends Phaser.Scene {
         });
         damageText.setOrigin(0.5, 0.5).setDepth(3000);
 
+        // vertical tween
         this.tweens.add({
             targets: damageText,
             y: damageText.y - 20,
+            duration: 1000,
+            ease: 'Back.easeOut',
+        });
+
+        // horizontal tween
+        this.tweens.add({
+            targets: damageText,
+            x: damageText.x + (Math.random()*2 - 1)*16,
+            duration: 1000,
+        })
+
+        // fade tween
+        this.tweens.add({
+            targets: damageText,
             alpha: 0,
             duration: 1000,
-            ease: 'Quad.easeIn',
+            ease: 'Quint.easeIn',
             onComplete: () => damageText.setVisible(false),
         });
     }
@@ -840,13 +944,43 @@ export class GameScene extends Phaser.Scene {
         });
         damageText.setOrigin(0.5, 0.5).setDepth(3000);
 
+        // vertical tween
         this.tweens.add({
             targets: damageText,
             y: damageText.y - 20,
+            duration: 1000,
+            ease: 'Back.easeOut',
+        });
+
+        // horizontal tween
+        this.tweens.add({
+            targets: damageText,
+            x: damageText.x + (Math.random()*2 - 1)*16,
+            duration: 1000,
+        })
+
+        // fade tween
+        this.tweens.add({
+            targets: damageText,
             alpha: 0,
             duration: 1000,
-            ease: 'Quad.easeIn',
+            ease: 'Quint.easeIn',
             onComplete: () => damageText.setVisible(false),
+        });
+    }
+
+    alphaFlashSprite(sprite: Phaser.GameObjects.Sprite, duration_ms: number = 250) {
+        if (!sprite || !sprite.scene) return;
+
+        sprite.scene.tweens.add({
+            targets: sprite,
+            alpha: { from: 0, to: 1 },
+            duration: duration_ms / 2,
+            yoyo: true,
+            ease: `Quad.easeInOut`,
+            onComplete: () => {
+                sprite.setAlpha(0);
+            }
         });
     }
 
@@ -941,9 +1075,36 @@ export class GameScene extends Phaser.Scene {
     //     }
     // }
 
-    showHammerSwing(x:number, y:number, entityType: 'enemy' | 'player') {
-        const radius = entityType == "player" ? 100 : 70;
-        const attackColor = entityType === "player" ? 0xffffff : 0xff0000;
+    showFireballTelegraphWarning(x: number, y: number, radius: number, duration_ms: number, casterType: 'enemy' | 'player') {
+        const attackColor = casterType === "player" ? 0xffffff : 0x7a09fa;
+
+        // const circle = this.getPooledCircle(x, y, radius, attackColor);
+        const circle = this.add.circle(x, y, radius, attackColor);
+        circle.setAlpha(0).setVisible(true).setDepth(901);
+        circle.setPosition(x,y);
+        console.log(circle);
+
+        this.tweens.add({
+            targets: circle,
+            alpha: 0.5,
+            duration: duration_ms,
+            onComplete: () => {
+                circle.setFillStyle(0xea323c, 1);
+                this.tweens.add({
+                    targets: circle,
+                    alpha: 0,
+                    duration: 500,
+                    onComplete: () => {
+                        circle.destroy();
+                    }
+                });
+            }
+        });
+    }
+
+    showHammerSwing(x:number, y:number, casterType: 'enemy' | 'player') {
+        const radius = casterType == "player" ? 100 : 70;
+        const attackColor = casterType === "player" ? 0xffffff : 0xff0000;
 
         const circle = this.getPooledCircle(x, y, radius, attackColor);
         circle.setAlpha(0.5).setVisible(true).setDepth(900);
@@ -1021,29 +1182,61 @@ export class GameScene extends Phaser.Scene {
             console.error('Tilemap failed to load');
             return;
         }
-        const tileset = map.addTilesetImage('tileset', 'tileset', 32, 32);
-        if (!tileset) {
-            console.error('Tileset not found');
+
+        // Dynamically load all tilesets used in the map
+        const tilesets: Phaser.Tilemaps.Tileset[] = [];
+        map.tilesets.forEach(tilesetData => {
+            const tilesetName = tilesetData.name;
+            const tileset = map.addTilesetImage(tilesetName, tilesetName, 32, 32);
+            // console.log("added tilest: ", tilesetName);
+            if (tileset) {
+                tilesets.push(tileset);
+            } else {
+                console.error(`Tileset ${tilesetName} not found for map ${tilemapRef}`);
+            }
+        });
+
+        if (tilesets.length === 0) {
+            console.error(`No valid tilesets found for map ${tilemapRef}`);
             return;
         }
-    
+
+        // Create layers
         map.layers.forEach((layerData, index) => {
             const layerName = layerData.name;
-    
+
             // Explicitly type properties as TilemapProperty[]
             const properties = layerData.properties as TilemapProperty[] | undefined;
-    
+
             const isHidden = properties?.find(prop => prop.name === 'isHidden')?.value === true;
             const isEnemyLayer = properties?.find(prop => prop.name === 'isEnemyLayer')?.value === true;
-    
+
             if (isHidden || isEnemyLayer) return;
-    
-            const layer = map.createLayer(layerName, tileset, worldX, worldY);
+
+            const layer = map.createLayer(layerName, tilesets, worldX, worldY);
             if (layer) {
                 layer.setDepth(index);
                 layer.setVisible(true);
             }
         });
+    
+        // map.layers.forEach((layerData, index) => {
+        //     const layerName = layerData.name;
+    
+        //     // Explicitly type properties as TilemapProperty[]
+        //     const properties = layerData.properties as TilemapProperty[] | undefined;
+    
+        //     const isHidden = properties?.find(prop => prop.name === 'isHidden')?.value === true;
+        //     const isEnemyLayer = properties?.find(prop => prop.name === 'isEnemyLayer')?.value === true;
+    
+        //     if (isHidden || isEnemyLayer) return;
+    
+        //     const layer = map.createLayer(layerName, tileset, worldX, worldY);
+        //     if (layer) {
+        //         layer.setDepth(index);
+        //         layer.setVisible(true);
+        //     }
+        // });
 
         this.tilemapZones[zoneId] = {
             zoneId: zoneId,
@@ -1157,10 +1350,12 @@ export class GameScene extends Phaser.Scene {
                 const interpX = older.x + (newer.x - older.x) * Math.min(1, Math.max(0, alpha));
                 const interpY = older.y + (newer.y - older.y) * Math.min(1, Math.max(0, alpha));
                 player.bodySprite.setPosition(interpX, interpY);
+                player.flashSprite.setPosition(interpX, interpY);
             } else if (buffer.length > 0) {
                 // Extrapolate if no newer position (using last known position)
                 const last = buffer[buffer.length - 1];
                 player.bodySprite.setPosition(last.x, last.y);
+                player.flashSprite.setPosition(last.x, last.y);
             }
         }
     }
@@ -1203,11 +1398,13 @@ export class GameScene extends Phaser.Scene {
                 const interpX = older.x + (newer.x - older.x) * Math.min(1, Math.max(0, alpha));
                 const interpY = older.y + (newer.y - older.y) * Math.min(1, Math.max(0, alpha));
                 enemy.bodySprite.setPosition(interpX, interpY);
+                enemy.flashSprite?.setPosition(interpX, interpY);
                 enemy.shadowSprite.setPosition(interpX, interpY + (enemy.bodySprite.height *0));
                 enemy.hpBar.setPosition(interpX, interpY - (enemy.bodySprite.height) * 1.2);
             } else if (buffer.length > 0) {
                 const last = buffer[buffer.length - 1];
                 enemy.bodySprite.setPosition(last.x, last.y);
+                enemy.flashSprite?.setPosition(last.x, last.y);
                 enemy.shadowSprite.setPosition(last.x, last.y + (enemy.bodySprite.height *0));
                 enemy.hpBar.setPosition(last.x, last.y - (enemy.bodySprite.height) * 1.2);
             }

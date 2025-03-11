@@ -33,6 +33,7 @@ type Enemy struct {
 	State          string        // Current state ("Spawn", "Roam", etc.)
 	StateStartTime time.Time     // When the current state started
 	StateDuration  time.Duration // Duration of the current state
+	PreviousState  string
 
 	// AI configuration (set by enemy type)
 	PursueTriggerRadius    float32       // Radius to trigger Pursue state
@@ -108,6 +109,7 @@ func NewEnemy(zoneID int, x, y float32, enemyType string) *Enemy {
 		State:          "Spawn",
 		StateStartTime: time.Now(),
 		StateDuration:  config.SpawnDuration,
+		PreviousState:  "",
 
 		// Ability configuration
 		AbilityName: config.AbilityName,
@@ -130,15 +132,27 @@ func NewEnemy(zoneID int, x, y float32, enemyType string) *Enemy {
 	return enemy
 }
 
+func (e *Enemy) ChangeState(newState string, newStateDuration time.Duration) {
+	e.PreviousState = e.State
+	e.State = newState
+	e.StateStartTime = time.Now()
+	e.StateDuration = newStateDuration
+	log.Println(e.ID, " has new State: ", newState)
+}
+
+func (e *Enemy) IsFirstTimeInState() bool {
+	isFirstTime := e.PreviousState != e.State
+	e.PreviousState = e.State
+	return isFirstTime
+}
+
 // UpdateEnemy updates the enemy's state and position
 func (e *Enemy) UpdateEnemy(gs *GameServer, zone *Zone) ([]Message, bool) {
 	var messages []Message
 
 	// Check for death
 	if e.Stats.HP <= 0 && e.State != "Death" {
-		e.State = "Death"
-		e.StateStartTime = time.Now()
-		e.StateDuration = e.DeathDuration
+		e.ChangeState("Death", e.DeathDuration)
 		e.VX, e.VY = 0, 0 // Stop moving
 	}
 
@@ -146,10 +160,7 @@ func (e *Enemy) UpdateEnemy(gs *GameServer, zone *Zone) ([]Message, bool) {
 	switch e.State {
 	case "Spawn":
 		if time.Since(e.StateStartTime) >= e.StateDuration {
-			e.State = "Roam"
-			e.StateStartTime = time.Now()
-			e.StateDuration = 0 // Roam has no fixed duration
-			log.Println("Roam")
+			e.ChangeState("Roam", 0)
 		}
 
 	case "Roam":
@@ -161,25 +172,30 @@ func (e *Enemy) UpdateEnemy(gs *GameServer, zone *Zone) ([]Message, bool) {
 		// Check for nearby players to pursue
 		nearestPlayer, dist := e.findNearestPlayer(zone)
 		if nearestPlayer != nil && dist <= e.PursueTriggerRadius {
-			e.State = "Pursue"
-			e.StateStartTime = time.Now()
-			e.StateDuration = 0 // Pursue has no fixed duration
-			log.Println("Pursue")
+			e.ChangeState("Pursue", 0)
 		}
 
 	case "Pursue":
 		nearestPlayer, dist := e.findNearestPlayer(zone)
 		if nearestPlayer == nil || dist > e.PursueTriggerRadius {
-			e.State = "Roam"
-			e.StateStartTime = time.Now()
-			e.StateDuration = 0
-			log.Println("Roam")
+			e.ChangeState("Roam", 0)
 		} else if dist <= e.TelegraphTriggerRadius {
-			e.State = "Telegraph"
-			e.StateStartTime = time.Now()
-			e.StateDuration = e.TelegraphDuration
+			e.ChangeState("Telegraph", e.TelegraphDuration)
 			e.VX, e.VY = 0, 0 // Stop moving to telegraph attack
-			log.Println("Telegraph")
+		} else {
+			// Move toward the player
+			dx := nearestPlayer.X - e.X
+			dy := nearestPlayer.Y - e.Y
+			mag := float32(math.Sqrt(float64(dx*dx + dy*dy)))
+			if mag > 0 {
+				e.VX = (dx / mag) * 150 // Move faster than Roam
+				e.VY = (dy / mag) * 150
+			}
+		}
+
+	case "Telegraph":
+		// if first time
+		if e.IsFirstTimeInState() {
 
 			// For Fireball, select the target and set the impact position
 			if e.AbilityName == "Fireball" {
@@ -240,27 +256,12 @@ func (e *Enemy) UpdateEnemy(gs *GameServer, zone *Zone) ([]Message, bool) {
 					}
 				}
 			}
-		} else {
-			// Move toward the player
-			dx := nearestPlayer.X - e.X
-			dy := nearestPlayer.Y - e.Y
-			mag := float32(math.Sqrt(float64(dx*dx + dy*dy)))
-			if mag > 0 {
-				e.VX = (dx / mag) * 150 // Move faster than Roam
-				e.VY = (dy / mag) * 150
-			}
 		}
 
-	case "Telegraph":
 		if time.Since(e.StateStartTime) >= e.StateDuration {
-			e.State = "Attack"
-			e.StateStartTime = time.Now()
-			e.StateDuration = e.AttackDuration
-			log.Println("Attack")
-			// Execute the ability if it exists
+			e.ChangeState("Attack", e.AttackDuration)
 			if e.Ability != nil {
 				messages = append(messages, e.Ability.Execute(e, gs, zone)...)
-				log.Println(messages)
 			} else {
 				log.Printf("Enemy %s has no ability to execute", e.ID)
 			}
@@ -268,37 +269,26 @@ func (e *Enemy) UpdateEnemy(gs *GameServer, zone *Zone) ([]Message, bool) {
 
 	case "Attack":
 		if time.Since(e.StateStartTime) >= e.StateDuration {
-			e.State = "Cooldown"
-			e.StateStartTime = time.Now()
-			log.Println("Cooldwon")
-			// Use the ability's cooldown for the Cooldown state duration
+			duration := time.Duration(1) * time.Second
 			if e.Ability != nil {
-				e.StateDuration = e.Ability.GetCooldown()
+				duration = e.Ability.GetCooldown()
 			} else {
 				// Fallback duration if no ability is set
-				e.StateDuration = 1 * time.Second
+				duration = 1 * time.Second
 				log.Printf("Enemy %s has no ability; using default cooldown of 1 second", e.ID)
 			}
+			e.ChangeState("Cooldown", duration)
 		}
 
 	case "Cooldown":
 		if time.Since(e.StateStartTime) >= e.StateDuration {
 			nearestPlayer, dist := e.findNearestPlayer(zone)
 			if nearestPlayer != nil && dist <= e.TelegraphTriggerRadius {
-				e.State = "Telegraph"
-				e.StateStartTime = time.Now()
-				e.StateDuration = e.TelegraphDuration
-				log.Println("Telegraph")
+				e.ChangeState("Telegraph", e.TelegraphDuration)
 			} else if nearestPlayer != nil && dist <= e.PursueTriggerRadius {
-				e.State = "Pursue"
-				e.StateStartTime = time.Now()
-				e.StateDuration = 0
-				log.Println("Pursue")
+				e.ChangeState("Puruse", 0)
 			} else {
-				e.State = "Roam"
-				e.StateStartTime = time.Now()
-				e.StateDuration = 0
-				log.Println("Roam")
+				e.ChangeState("Roam", 0)
 			}
 		}
 

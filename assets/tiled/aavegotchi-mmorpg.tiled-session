@@ -32,9 +32,9 @@
             "scaleInEditor": 1
         }
     },
-    "last.exportedFilePath": "/Users/slickgotchi/Projects/aavegotchi-mmorpg/shared/tilemap",
+    "last.exportedFilePath": "/Users/slickgotchi/Projects/aavegotchi-mmorpg/shared/tilemap/maps",
     "last.externalTilesetPath": "/Users/slickgotchi/Projects/aavegotchi-mmorpg/assets/tilesets",
-    "last.imagePath": "/Users/slickgotchi/Projects/aavegotchi-mmorpg/shared/tilemap",
+    "last.imagePath": "/Users/slickgotchi/Projects/aavegotchi-mmorpg/shared/tilemap/tilesets",
     "map.height": 250,
     "map.lastUsedExportFilter": "JSON map files (*.tmj *.json)",
     "map.lastUsedFormat": "tmx",

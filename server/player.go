@@ -182,7 +182,7 @@ func (p *Player) UpdatePlayer(gs *GameServer, zone *Zone, dt float32) []Message 
 
 		// check enemeies on screen
 		if isEnemiesOnScreen(p, zone) {
-			log.Println("enemies on screen")
+			// log.Println("enemies on screen")
 			messages = append(messages, ExecuteAbility(p, "HammerSwing", gs, zone)...)
 		}
 
