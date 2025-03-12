@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { fetchGotchiSVGs, Aavegotchi } from "./FetchGotchis";
+import { PlayableCharacter } from "../components/IntroModal";
 
 const GAME_WIDTH = 1920;
 const GAME_HEIGHT = 1200;
@@ -21,6 +22,7 @@ export interface PositionUpdate {
 export interface Player {
     bodySprite: Phaser.GameObjects.Sprite;
     flashSprite: Phaser.GameObjects.Sprite;
+    shadowSprite: Phaser.GameObjects.Sprite;
     gotchiId: number;
     isAssignedSVG: boolean;
     positionBuffer: PositionUpdate[];
@@ -157,6 +159,11 @@ export class GameScene extends Phaser.Scene {
 
         // MISC
         this.load.image("gotchi_placeholder", "/assets/gotchi_placeholder.png");
+
+        // AVATARS
+        this.load.image("duck_guardian", "/assets/avatars/duck_guardian.png");
+        this.load.image("duck_ravager", "/assets/avatars/duck_ravager.png");
+        this.load.image("duck_monk", "/assets/avatars/duck_monk.png");
     }
 
     create() {
@@ -309,12 +316,22 @@ export class GameScene extends Phaser.Scene {
         window.addEventListener("resize", () => this.resizeGame());
     }
 
-    setWebSocket(ws: WebSocket) {
-        // this.ws = new WebSocket("ws://localhost:8080/ws");
+    startWebSocketConnection(
+        ws: WebSocket,
+        playableCharacter: PlayableCharacter
+    ) {
         this.ws = ws;
         this.ws.onopen = () => {
             console.log("Connected to server");
             this.isConnected = true;
+
+            // send message to selectCharacter
+            this.ws.send(
+                JSON.stringify({
+                    type: "selectCharacter",
+                    data: playableCharacter,
+                })
+            );
 
             this.ws.onmessage = (event) => {
                 const messages = JSON.parse(event.data);
@@ -528,10 +545,13 @@ export class GameScene extends Phaser.Scene {
             x,
             y,
             zoneId,
+            species,
+            speciesId,
             timestamp,
             maxHp,
             hp,
             maxAp,
+            direction,
             ap,
             gameXp,
             gameLevel,
@@ -539,26 +559,57 @@ export class GameScene extends Phaser.Scene {
             gameXpTotalForNextLevel,
         } = datum;
 
+        console.log(datum);
+
         // NEW PLAYER
         if (!this.players[playerId]) {
+            var texture = "";
+            var scale = 1;
+            if (species === "Duck") {
+                if (speciesId === 0) texture = "duck_guardian";
+                if (speciesId === 1) texture = "duck_ravager";
+                if (speciesId === 2) texture = "duck_monk";
+
+                scale = 1.5;
+            }
+            if (texture === "") {
+                console.log(
+                    "texture was ",
+                    texture,
+                    " with speciesId: ",
+                    speciesId
+                );
+                return;
+            }
+
             const newPlayerSprite = this.add
-                .sprite(x, y, "gotchi_placeholder")
+                .sprite(x, y, texture)
                 .setDepth(1000)
-                .setScale(0.75)
+                .setScale(scale)
                 .setOrigin(0.5, 1);
 
             const flashSprite = this.add
-                .sprite(x, y, "gotchi_placeholder")
+                .sprite(x, y, texture)
                 .setDepth(1001)
-                .setScale(0.75)
+                .setScale(scale)
                 .setOrigin(0.5, 1)
                 .setTintFill(0xf5555d)
                 .setAlpha(0)
                 .setVisible(true);
 
+            const shadowSprite = this.add
+                .sprite(x, y, "enemies")
+                .setFrame("shadow.png")
+                .setDepth(999)
+                .setScale(scale * 0.75)
+                .setOrigin(0.5, 0.5)
+                .setAlpha(0.5)
+                .setVisible(true);
+
             this.players[playerId] = {
                 bodySprite: newPlayerSprite,
                 flashSprite: flashSprite,
+                shadowSprite: shadowSprite,
                 gotchiId: 0,
                 isAssignedSVG: false,
                 positionBuffer: [],
@@ -618,7 +669,17 @@ export class GameScene extends Phaser.Scene {
                 player.previousHp = player.hp;
             }
 
-            // console.log(player, this.players[playerId]);
+            // check direction updates
+            if (direction) {
+                if (direction === 1) {
+                    player.bodySprite.setFlipX(true);
+                    player.flashSprite.setFlipX(true);
+                }
+                if (direction === 2) {
+                    player.bodySprite.setFlipX(false);
+                    player.flashSprite.setFlipX(false);
+                }
+            }
         }
 
         // LOCAL PLAYER
@@ -1292,18 +1353,17 @@ export class GameScene extends Phaser.Scene {
         };
     }
 
-    onGotchiSelected(gotchi: Aavegotchi) {
-        this.registry.set("selectedGotchi", gotchi);
-        this.registry.set("initialState", "spawnPlayer");
-        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            //   this.ws.send(JSON.stringify({ type: 'selectCharacter', data: { characterType: 'gotchi', characterId: gotchi.id } }));
-        }
-    }
+    // onGotchiSelected(gotchi: Aavegotchi) {
+    //     this.registry.set("selectedGotchi", gotchi);
+    //     this.registry.set("initialState", "spawnPlayer");
+    //     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+    //         //   this.ws.send(JSON.stringify({ type: 'selectCharacter', data: { characterType: 'gotchi', characterId: gotchi.id } }));
+    //     }
+    // }
 
     shutdown() {
-        this.registry
-            .get("game")
-            ?.events.off("selectGotchi", this.onGotchiSelected, this);
+        this.registry.get("game");
+        // ?.events.off("selectGotchi", this.onGotchiSelected, this);
         console.log("GameScene shutting down");
     }
 
@@ -1429,11 +1489,13 @@ export class GameScene extends Phaser.Scene {
                     (newer.y - older.y) * Math.min(1, Math.max(0, alpha));
                 player.bodySprite.setPosition(interpX, interpY);
                 player.flashSprite.setPosition(interpX, interpY);
+                player.shadowSprite.setPosition(interpX, interpY);
             } else if (buffer.length > 0) {
                 // Extrapolate if no newer position (using last known position)
                 const last = buffer[buffer.length - 1];
                 player.bodySprite.setPosition(last.x, last.y);
                 player.flashSprite.setPosition(last.x, last.y);
+                player.shadowSprite.setPosition(last.x, last.y);
             }
         }
     }

@@ -141,8 +141,9 @@ function App() {
             | GameScene
             | undefined;
         if (scene) {
+            // connect to the websocket
             const ws = new WebSocket("ws://localhost:8080/ws");
-            scene.setWebSocket(ws);
+            scene.startWebSocketConnection(ws, playableCharacter);
         }
     };
 

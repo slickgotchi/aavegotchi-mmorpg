@@ -77,25 +77,7 @@ type GameServer struct {
 	Zones map[int]*Zone
 }
 
-// PlayerUpdate represents player data sent to clients
-type PlayerUpdate struct {
-	PlayerID  string  `json:"playerId"`
-	X         float32 `json:"x"`
-	Y         float32 `json:"y"`
-	ZoneID    int     `json:"zoneId"`
-	Timestamp int64   `json:"timestamp"`
 
-	// game stats
-	MaxHP int `json:"maxHp"`
-	HP    int `json:"hp"`
-	MaxAP int `json:"maxAp"`
-	AP    int `json:"ap"`
-
-	GameXP                  int `json:"gameXp"`
-	GameLevel               int `json:"gameLevel"`
-	GameXPOnCurrentLevel    int `json:"gameXpOnCurrentLevel"`
-	GameXPTotalForNextLevel int `json:"gameXpTotalForNextLevel"`
-}
 
 // EnemyUpdate represents enemy data sent to clients
 type EnemyUpdate struct {
@@ -380,6 +362,11 @@ func (gs *GameServer) processZone(zone *Zone) {
 						ZoneID:    p.ZoneID,
 						Timestamp: timestamp,
 
+						Species: p.Species,
+						SpeciesID: p.SpeciesID,
+
+						Direction: p.Direction,
+
 						MaxHP: p.Stats.MaxHP,
 						HP:    p.Stats.HP,
 						MaxAP: p.Stats.MaxAP,
@@ -519,34 +506,7 @@ func (gs *GameServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	initialZone.Players[playerID] = player
 	log.Printf("Player %s spawned in Zone %d (%d,%d)", playerID, initialZone.ID, initialZone.GridX, initialZone.GridY)
 
-	// Prepare welcome message with world zones
-	zonesInfo := make([]ZoneInfo, 0, len(gs.Zones))
-	for _, z := range gs.Zones {
-		var config ZoneConfig
-		for _, c := range World.ZoneConfigs {
-			if c.ID == z.ID {
-				config = c
-				break
-			}
-		}
-		zonesInfo = append(zonesInfo, ZoneInfo{
-			ID:         z.ID,
-			TilemapRef: config.TilemapRef,
-			WorldX:     config.WorldX,
-			WorldY:     config.WorldY,
-		})
-	}
 
-	// Send welcome message
-	batch := []Message{
-		{Type: "welcome", Data: map[string]interface{}{
-			"playerId": playerID,
-			"zones":    zonesInfo,
-		}},
-	}
-	if err := player.Conn.WriteJSON(batch); err != nil {
-		log.Printf("Error sending welcome message to %s: %v", player.ID, err)
-	}
 
 	// Read messages from the client
 	for {

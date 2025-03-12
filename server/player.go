@@ -19,6 +19,11 @@ type Player struct {
 	VX, VY float32 // Tiles per second
 	Conn   *websocket.Conn
 
+	Species string
+	SpeciesID int
+
+	Direction int // 0 = down, 1 = left, 2 = right, 3 = up
+
 	SpriteHeightPixels float32
 
 	Stats Stats // Shared stats struct
@@ -32,6 +37,45 @@ type Player struct {
 	BaseAttackTimerS    float32
 	BaseAttackIntervalS float32
 }
+
+// PlayerUpdate represents player data sent to clients
+type PlayerUpdate struct {
+	PlayerID  string  `json:"playerId"`
+	X         float32 `json:"x"`
+	Y         float32 `json:"y"`
+	ZoneID    int     `json:"zoneId"`
+	Timestamp int64   `json:"timestamp"`
+
+	// species data
+	Species string `json:"species"`
+	SpeciesID int `json:"speciesId"`
+
+	Direction int `json:"direction"`
+
+	// game stats
+	MaxHP int `json:"maxHp"`
+	HP    int `json:"hp"`
+	MaxAP int `json:"maxAp"`
+	AP    int `json:"ap"`
+
+	GameXP                  int `json:"gameXp"`
+	GameLevel               int `json:"gameLevel"`
+	GameXPOnCurrentLevel    int `json:"gameXpOnCurrentLevel"`
+	GameXPTotalForNextLevel int `json:"gameXpTotalForNextLevel"`
+}
+
+// PlayableCharacter represents the structure of a playable character sent from the client
+type PlayableCharacter struct {
+	Image    string `json:"image"`
+	Name     string `json:"name"`
+	Species  string `json:"species"`
+	ClassType string `json:"classType"`
+	SpeciesID int   `json:"speciesId"` // optional field
+	TNK      int    `json:"TNK"`
+	DPS      int    `json:"DPS"`
+	SUP      int    `json:"SUP"`
+}
+
 
 // GetID returns the player's ID
 func (p *Player) GetID() string {
@@ -66,6 +110,11 @@ func NewPlayer(id string, zoneID int, x, y float32, conn *websocket.Conn) *Playe
 		Y:      y,
 		Conn:   conn,
 
+		Species: "Duck",
+		SpeciesID: -1,
+
+		Direction: 0,
+
 		SpriteHeightPixels: 64,
 
 		Stats: Stats{
@@ -87,48 +136,126 @@ func NewPlayer(id string, zoneID int, x, y float32, conn *websocket.Conn) *Playe
 	return player
 }
 
-// HandleInput processes incoming input messages and updates player velocity
+// HandleInput processes incoming input messages and updates player velocity or performs other actions
 func (p *Player) HandleInput(msg Message, gs *GameServer, zone *Zone) []Message {
 	var messages []Message
-	if msg.Type != "input" {
+	
+	// Handle different message types
+	switch msg.Type {
+	case "input":
+		// Process input for movement and abilities
+		data, ok := msg.Data.(map[string]interface{})
+		if !ok {
+			log.Printf("Invalid input message data for player %s: expected map", p.ID)
+			return messages
+		}
+		
+		keys, ok := data["keys"].(map[string]interface{})
+		if !ok {
+			log.Printf("Invalid input message keys for player %s: expected map", p.ID)
+			return messages
+		}
+
+		// Reset velocity before updating
+		p.VX = 0
+		p.VY = 0
+		speed := float32(PlayerMoveSpeed)
+		
+		// Handle movement keys
+		if w, ok := keys["W"].(bool); ok && w {
+			p.VY = -speed
+			p.Direction = 3
+		}
+		if s, ok := keys["S"].(bool); ok && s {
+			p.VY = speed
+			p.Direction = 0
+		}
+		if a, ok := keys["A"].(bool); ok && a {
+			p.VX = -speed
+			p.Direction = 1
+		}
+		if d, ok := keys["D"].(bool); ok && d {
+			p.VX = speed
+			p.Direction = 2
+		}
+		
+		// Handle spacebar for ability use (e.g., HammerSwing)
+		if space, ok := keys["SPACE"].(bool); ok && space {
+			log.Printf("Player %s pressed SPACE in Zone %d", p.ID, zone.ID)
+			// Execute HammerSwing ability
+			messages = append(messages, ExecuteAbility(p, "HammerSwing", gs, zone)...)
+		}
+
+	case "selectCharacter":
+		// Handle selectCharacter message
+		data, ok := msg.Data.(map[string]interface{})
+		if !ok {
+			log.Printf("Invalid selectCharacter message data for player %s: expected map", p.ID)
+			return messages
+		}
+
+		// Convert the data into the PlayableCharacter struct
+		var character PlayableCharacter
+		characterJSON, err := json.Marshal(data)
+		if err != nil {
+			log.Printf("Error marshalling character data for player %s: %v", p.ID, err)
+			return messages
+		}
+
+		// Unmarshal into the PlayableCharacter struct
+		err = json.Unmarshal(characterJSON, &character)
+		if err != nil {
+			log.Printf("Error unmarshalling character data for player %s: %v", p.ID, err)
+			return messages
+		}
+
+		log.Println(character)
+
+		// assign species and id
+		p.Species = character.Species
+		p.SpeciesID = character.SpeciesID
+
+		// Prepare welcome message with world zones
+		zonesInfo := make([]ZoneInfo, 0, len(gs.Zones))
+		for _, z := range gs.Zones {
+			var config ZoneConfig
+			for _, c := range World.ZoneConfigs {
+				if c.ID == z.ID {
+					config = c
+					break
+				}
+			}
+			zonesInfo = append(zonesInfo, ZoneInfo{
+				ID:         z.ID,
+				TilemapRef: config.TilemapRef,
+				WorldX:     config.WorldX,
+				WorldY:     config.WorldY,
+			})
+		}
+
+		// Send welcome message
+		batch := []Message{
+			{Type: "welcome", Data: map[string]interface{}{
+				"playerId": p.ID,
+				"zones":    zonesInfo,
+			}},
+		}
+		if err := p.Conn.WriteJSON(batch); err != nil {
+			log.Printf("Error sending welcome message to %s: %v", p.ID, err)
+		}
+
+
+	default:
 		log.Printf("Unhandled message type for player %s: %s", p.ID, msg.Type)
-		return messages
-	}
-
-	data, ok := msg.Data.(map[string]interface{})
-	if !ok {
-		log.Printf("Invalid input message data for player %s: expected map", p.ID)
-		return messages
-	}
-	keys, ok := data["keys"].(map[string]interface{})
-	if !ok {
-		log.Printf("Invalid input message keys for player %s: expected map", p.ID)
-		return messages
-	}
-
-	p.VX = 0
-	p.VY = 0
-	speed := float32(PlayerMoveSpeed)
-	if w, ok := keys["W"].(bool); ok && w {
-		p.VY = -speed
-	}
-	if s, ok := keys["S"].(bool); ok && s {
-		p.VY = speed
-	}
-	if a, ok := keys["A"].(bool); ok && a {
-		p.VX = -speed
-	}
-	if d, ok := keys["D"].(bool); ok && d {
-		p.VX = speed
-	}
-	if space, ok := keys["SPACE"].(bool); ok && space {
-		log.Printf("Player %s pressed SPACE in Zone %d", p.ID, zone.ID)
-		// Execute HammerSwing ability
-		messages = append(messages, ExecuteAbility(p, "HammerSwing", gs, zone)...)
 	}
 
 	return messages
 }
+
+func SpawnPlayerFromCharacterSelect() {
+
+}
+
 
 // UpdatePlayer updates the player's position, handles zone switching & general ability handling
 func (p *Player) UpdatePlayer(gs *GameServer, zone *Zone, dt float32) []Message {

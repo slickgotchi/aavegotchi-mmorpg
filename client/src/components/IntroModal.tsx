@@ -18,7 +18,7 @@ export interface PlayableCharacter {
     name: string;
     species: "Duck" | "Gotchi";
     classType: "Guardian" | "Ravager" | "Monk";
-    gotchiId?: number;
+    speciesId: number;
     TNK: number;
     DPS: number;
     SUP: number;
@@ -30,6 +30,7 @@ const playableCharacters: PlayableCharacter[] = [
         name: "Jeff the Strong",
         species: "Duck",
         classType: "Guardian",
+        speciesId: 0,
         TNK: 150,
         DPS: 100,
         SUP: 50,
@@ -39,15 +40,17 @@ const playableCharacters: PlayableCharacter[] = [
         name: "Jane the Crazy",
         species: "Duck",
         classType: "Ravager",
+        speciesId: 1,
         TNK: 50,
         DPS: 150,
         SUP: 100,
     },
     {
-        image: "/assets/avatars/duck_paladin.png",
+        image: "/assets/avatars/duck_monk.png",
         name: "Jo the Jolly",
         species: "Duck",
         classType: "Monk",
+        speciesId: 2,
         TNK: 100,
         DPS: 50,
         SUP: 150,
@@ -58,23 +61,6 @@ export function IntroModal({ onPlay, gameDimensions }: IntroModalProps) {
     const [selectedCharacter, setSelectedCharacter] =
         useState<PlayableCharacter | null>(null);
     const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
-    // // State to store window height
-    // const [windowHeight, setWindowHeight] = useState(window.innerHeight);
-
-    // // Update windowHeight state when the window is resized
-    // useEffect(() => {
-    //     const handleResize = () => {
-    //         setWindowHeight(window.innerHeight); // Update the state with the new window height
-    //     };
-
-    //     // Add event listener for resize
-    //     window.addEventListener("resize", handleResize);
-
-    //     // Cleanup event listener on component unmount
-    //     return () => {
-    //         window.removeEventListener("resize", handleResize);
-    //     };
-    // }, []);
 
     const handlePlay = useCallback(() => {
         if (!selectedCharacter) return;

@@ -137,7 +137,7 @@ func (e *Enemy) ChangeState(newState string, newStateDuration time.Duration) {
 	e.State = newState
 	e.StateStartTime = time.Now()
 	e.StateDuration = newStateDuration
-	log.Println(e.ID, " has new State: ", newState)
+	// log.Println(e.ID, " has new State: ", newState)
 }
 
 func (e *Enemy) IsFirstTimeInState() bool {
