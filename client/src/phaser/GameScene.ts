@@ -112,7 +112,6 @@ export class GameScene extends Phaser.Scene {
     private isConnected = false;
     private keyState = { W: false, A: false, S: false, D: false, SPACE: false };
     private localPlayerID!: string;
-    // private localZoneId = 0;
     private followedPlayerID!: string;
     private activeZoneList!: ActiveZoneList;
 
@@ -374,9 +373,24 @@ export class GameScene extends Phaser.Scene {
             };
 
             this.ws.onerror = (e) => console.error("WebSocket error:", e);
-            this.ws.onclose = () => {
-                console.log("WebSocket closed");
+            this.ws.onclose = (event: CloseEvent) => {
+                console.log("WebSocket connection closed");
+                console.log("Close Code:", event.code);
+                console.log("Close Reason:", event.reason);
+                console.log("Was Clean:", event.wasClean);
+
+                delete this.players[this.localPlayerID];
                 this.isConnected = false;
+                this.localPlayerID = "";
+                this.followedPlayerID = "";
+                this.cameras.main.stopFollow();
+
+                // Store game-over state and message in the registry
+                this.registry.set("gameOver", {
+                    isGameOver: true,
+                    message: event.reason || "Disconnected",
+                    code: event.code,
+                });
             };
         };
     }
@@ -558,8 +572,6 @@ export class GameScene extends Phaser.Scene {
             gameXpOnCurrentLevel,
             gameXpTotalForNextLevel,
         } = datum;
-
-        console.log(datum);
 
         // NEW PLAYER
         if (!this.players[playerId]) {

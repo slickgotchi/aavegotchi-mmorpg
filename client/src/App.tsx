@@ -11,6 +11,7 @@ import { PlayerXPStatsHUD } from "./components/PlayerXPStatHUD";
 import { LevelUpNotification } from "./components/LevelUpNotification";
 import { DebugInfo } from "./components/DebugInfo";
 import { IntroModal, PlayableCharacter } from "./components/IntroModal";
+import { GameOverModal } from "./components/GameOverModal";
 
 const GAME_WIDTH = 1920;
 const GAME_HEIGHT = 1200;
@@ -36,7 +37,9 @@ function App() {
         gameXpTotalForNextLevel: number;
     } | null>(null);
     const [ws, setWs] = useState<WebSocket | null>(null); // Track WebSocket
-    const [showModal, setShowModal] = useState(true);
+    const [showIntroModal, setShowIntroModal] = useState(true);
+    const [showGameOverModal, setShowGameOverModal] = useState(false);
+    const [gameOverMessage, setGameOverMessage] = useState<string | null>(null);
 
     useEffect(() => {
         if (!containerRef.current) return;
@@ -66,21 +69,28 @@ function App() {
 
         const game = gameRef.current;
 
-        // // Initialize WebSocket (similar to GameScene)
-        // const websocket = new WebSocket('ws://localhost:8080/ws');
-        // websocket.onopen = () => {
-        //     console.log('WebSocket connected in App');
-        //     setWs(websocket);
-        // };
-        // websocket.onclose = () => {
-        //     console.log('WebSocket closed in App');
-        //     setWs(null);
-        // };
-
         // Listen for level-up event from Phaser
         game.registry.events.on("levelUp", (data: any) => {
             setLevelUpData(data);
         });
+
+        // Monitor gameOver state from registry
+        const checkGameOver = () => {
+            const gameOver = game.registry.get("gameOver");
+            if (gameOver && gameOver.isGameOver) {
+                setShowGameOverModal(true);
+                setGameOverMessage(gameOver.message || "Game Over");
+                // Optionally clear the registry entry after handling
+                game.registry.set("gameOver", {
+                    isGameOver: false,
+                    message: null,
+                    code: 0,
+                });
+            }
+        };
+
+        // Check every 100ms (adjust as needed)
+        const intervalId = setInterval(checkGameOver, 100);
 
         const updateDimensions = () => {
             const canvas = game.canvas;
@@ -132,11 +142,12 @@ function App() {
             window.removeEventListener("resize", resizeHandler);
             game.events.off("resize", resizeHandler);
             game.registry.events.off("levelUp"); // Cleanup
+            clearInterval(intervalId); // Cleanup interval
         };
     }, []);
 
     const handlePlay = (playableCharacter: PlayableCharacter) => {
-        setShowModal(false);
+        setShowIntroModal(false);
         const scene = gameRef.current?.scene.getScenes()[0] as
             | GameScene
             | undefined;
@@ -145,6 +156,12 @@ function App() {
             const ws = new WebSocket("ws://localhost:8080/ws");
             scene.startWebSocketConnection(ws, playableCharacter);
         }
+    };
+
+    const handleReplay = () => {
+        console.log("handleReplay()");
+        setShowIntroModal(true);
+        setShowGameOverModal(false);
     };
 
     const handleAccountChange = (
@@ -166,12 +183,14 @@ function App() {
 
     return (
         <div ref={containerRef} className="game-container">
-            {showModal && (
+            {showIntroModal && (
                 <IntroModal
                     onPlay={handlePlay}
-                    gameDimensions={gameDimensions}
+                    // gameDimensions={gameDimensions}
                 />
             )}
+
+            {showGameOverModal && <GameOverModal onReplay={handleReplay} />}
 
             {!selectedGotchi && gotchis.length > 0 && (
                 <AavegotchiSelectList

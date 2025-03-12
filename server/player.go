@@ -136,6 +136,51 @@ func NewPlayer(id string, zoneID int, x, y float32, conn *websocket.Conn) *Playe
 	return player
 }
 
+// removePlayer cleans up and removes a player from the game state
+func (p *Player) removePlayer(gs *GameServer) error {
+	if p.Conn == nil {
+		log.Printf("Player %s has no active connection to remove", p.ID)
+		return nil
+	}
+
+	// Get the current zone
+	currentZone, exists := gs.Zones[p.ZoneID]
+	if !exists {
+		log.Printf("Player %s's zone %d not found", p.ID, p.ZoneID)
+	} else {
+		// Remove the player from the current zone's Players map
+		delete(currentZone.Players, p.ID)
+		log.Printf("Player %s removed from zone %d", p.ID, p.ZoneID)
+	}
+
+	// Offload WebSocket close operation to a goroutine
+	go func(conn *websocket.Conn) {
+		// Set a shorter write deadline
+		if err := conn.SetWriteDeadline(time.Now().Add(500 * time.Millisecond)); err != nil {
+			log.Printf("Error setting write deadline for player %s: %v", p.ID, err)
+			return
+		}
+
+		// Send the WebSocket close message
+		err := conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(3000, "Game Over: HP Depleted"))
+		if err != nil {
+			log.Printf("Error sending close message to player %s: %v", p.ID, err)
+			return
+		}
+
+		// Wait briefly to allow the close message to be sent (optional, can be reduced or removed)
+		time.Sleep(100 * time.Millisecond)
+
+		// Ensure the connection is closed
+		conn.Close()
+	}(p.Conn)
+
+	// Reset the connection reference immediately
+	p.Conn = nil
+
+	return nil
+}
+
 // HandleInput processes incoming input messages and updates player velocity or performs other actions
 func (p *Player) HandleInput(msg Message, gs *GameServer, zone *Zone) []Message {
 	var messages []Message
@@ -313,6 +358,13 @@ func (p *Player) UpdatePlayer(gs *GameServer, zone *Zone, dt float32) []Message 
 			messages = append(messages, ExecuteAbility(p, "HammerSwing", gs, zone)...)
 		}
 
+	}
+
+	// check for player death
+	if p.Stats.HP <= 0 {
+		if err := p.removePlayer(gs); err != nil {
+			log.Printf("Error removing player %s: %v", p.ID, err)
+		}
 	}
 
 	return messages

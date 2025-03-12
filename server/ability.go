@@ -53,7 +53,7 @@ func NewHammerSwingForCaster(caster Entity) *HammerSwing {
 	if isEnemy {
 		// log.Println("enemy HammerSwing")
 		return NewHammerSwing(
-			10,       // Damage
+			1000,       // Damage
 			70,       // Radius (smaller than player's)
 			"player", // Targets players only
 			time.Duration(2000)*time.Millisecond,
@@ -180,7 +180,7 @@ func NewFireballForCaster(caster Entity) *Fireball {
 
 	if isEnemy {
 		return NewFireball(
-			20,       // Damage
+			2000,       // Damage
 			50,       // Radius at impact
 			300,      // Maximum targeting range
 			"player", // Targets players only

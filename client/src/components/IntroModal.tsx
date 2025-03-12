@@ -5,12 +5,12 @@ import AvatarSelectCard from "./AvatarSelectCard";
 
 interface IntroModalProps {
     onPlay: (playableCharacter: PlayableCharacter) => void;
-    gameDimensions: {
-        width: number;
-        height: number;
-        left: number;
-        top: number;
-    };
+    // gameDimensions: {
+    //     width: number;
+    //     height: number;
+    //     left: number;
+    //     top: number;
+    // };
 }
 
 export interface PlayableCharacter {
@@ -37,7 +37,7 @@ const playableCharacters: PlayableCharacter[] = [
     },
     {
         image: "/assets/avatars/duck_ravager.png",
-        name: "Jane the Crazy",
+        name: "Jane the Deadly",
         species: "Duck",
         classType: "Ravager",
         speciesId: 1,
@@ -57,7 +57,7 @@ const playableCharacters: PlayableCharacter[] = [
     },
 ];
 
-export function IntroModal({ onPlay, gameDimensions }: IntroModalProps) {
+export function IntroModal({ onPlay }: IntroModalProps) {
     const [selectedCharacter, setSelectedCharacter] =
         useState<PlayableCharacter | null>(null);
     const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
@@ -132,7 +132,7 @@ export function IntroModal({ onPlay, gameDimensions }: IntroModalProps) {
                     <ConnectWalletButton
                         gameRef={{ current: null }} // Placeholder, adjust with actual game ref
                         onAccountChange={(account, gotchis) => {}}
-                        gameDimensions={gameDimensions}
+                        // gameDimensions={gameDimensions}
                     />
                 </div>
             </div>
