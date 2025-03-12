@@ -53,21 +53,20 @@ export function PlayerXPStatsHUD({ gameRef, levelUpData, gameDimensions }: Playe
         }
     }, [levelUpData]);
 
-    const scale = Math.min(gameDimensions.width / 1920, gameDimensions.height / 1200);
     // Use a fixed base width scaled by max values, not arbitrary 450 * 32
-    const barPadding = 4 * scale;
+    const barPadding = 2;
 
-    const xpFillBarWidth = 800 * scale; // Base width for visual consistency
-    const xpFillBarHeight = 32 * scale;
+    const xpFillBarWidth = 300; // Base width for visual consistency
+    const xpFillBarHeight = 16;
     const xpBgBarWidth = xpFillBarWidth + 2*barPadding;  // Static width for HP background
     const xpBgBarHeight = xpFillBarHeight + 2*barPadding;
 
-    const levelFillBarWidth = 64 * scale; // Base width for visual consistency
-    const levelFillBarHeight = 48 * scale;
+    const levelFillBarWidth = 32; // Base width for visual consistency
+    const levelFillBarHeight = 24;
     const levelBgBarWidth = levelFillBarWidth + 2*barPadding;  // Static width for HP background
     const levelBgBarHeight = levelFillBarHeight + 2*barPadding;
 
-    const margin = 10 * scale;
+    const margin = 8;
 
     if (!playerXPStats) return null;
 
@@ -77,8 +76,8 @@ export function PlayerXPStatsHUD({ gameRef, levelUpData, gameDimensions }: Playe
     // playerXPStats.xp_onCurrentLevel = 55;
     // playerXPStats.xp_totalForNextLevel = 100;
 
-    const shadow = 0*scale;
-    const blur = 3*scale;
+    const shadow = 0;
+    const blur = 3;
     const textShadow = `${shadow}px ${shadow}px ${blur}px rgba(0,0,0,1)`;
 
     // console.log(playerXPStats.gameLevel);
@@ -87,8 +86,8 @@ export function PlayerXPStatsHUD({ gameRef, levelUpData, gameDimensions }: Playe
         <div
             style={{
                 position: 'absolute',
-                left: `${gameDimensions.left+margin}px`,
-                top: `${gameDimensions.top+margin}px`,
+                left: `${margin}px`,
+                top: `${margin}px`,
                 zIndex: 2000,
                 fontFamily: 'Pixelar',
             }}

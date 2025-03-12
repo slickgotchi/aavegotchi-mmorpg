@@ -6,6 +6,7 @@
     height: 100%;
     overflow: hidden;
     text-align: center;
+    box-sizing: border-box;
 }
 
 /* Game container styles */
@@ -29,3 +30,49 @@
     display: none; /* Hide any leftover Vite styles if not needed */
 }
 
+/* Base button style */
+.btn {
+    padding: .75rem 1.5rem;
+    font-family: 'Pixelar';
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: white;
+    background-color: #007bff; /* Blue background */
+    background-color: #8a4836;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background-color 0.3s, transform 0.1s;
+  }
+  
+  /* Hover effect */
+  .btn:hover {
+    /* background-color: #0056b3;  */
+    background-color: #5d2c28;
+  }
+  
+  /* Active (when clicked) effect */
+  .btn:active {
+    transform: scale(0.98); /* Slightly shrink button */
+  }
+
+  .btn-inactive:hover {
+    background-color: #272727;
+    cursor: default;
+  }
+  
+  /* Focus effect (for accessibility) */
+  .btn:focus {
+    outline: none;
+    box-shadow: 0 0 0 4px rgba(38, 143, 255, 0.5); /* Light blue glow */
+  }
+
+  .btn-small {
+    padding: 0.5rem 1rem;
+    font-size: 1rem;
+  }
+
+  .btn-inactive {
+    background-color: #272727;
+    color: #858585;
+  }

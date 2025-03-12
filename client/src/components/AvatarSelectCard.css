@@ -1,0 +1,116 @@
+.avatar-select-card {
+    background-color: #272727; /* Gray-800 */
+    box-shadow: 2px 4px 6px rgba(0, 0, 0, 0.1);
+    width: 192px; /* 48 * 4px = 192px */
+    height: 256px;
+
+    padding: 10px;
+    border-radius: 8px;
+    border: solid 1px #272727;
+
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.avatar-select-card:hover {
+    cursor: pointer;
+}
+
+.selected {
+    border: solid 1px #f6ca9f;
+}
+
+.avatar-image {
+    /* border: solid red 1px; */
+
+    width: 90px; /* 24 * 4px = 96px */
+    height: 90px;
+
+    image-rendering: pixelated;
+}
+
+.avatar-name {
+    /* border: solid red 1px; */
+
+    color: white;
+    font-size: 1.5rem; /* text-lg */
+    font-weight: bold;
+}
+
+.avatar-class-type {
+    /* border: solid red 1px; */
+
+    color: white;
+    font-size: 1.25rem; /* text-lg */
+    font-weight: bold;
+}
+
+.stat-container {
+    height: 20px;
+    width: 100%;
+
+    display: flex;
+    flex-flow: row nowrap;
+    align-items: center;
+
+    /* border: solid 1px red; */
+}
+
+.stat-label {
+    height: 100%;
+    width: 20%;
+    font-size: 1rem; /* text-xs */
+    color: #ffffff; /* gray-400 */
+    /* border: solid 1px green; */
+
+    display: flex;
+    flex-flow: row nowrap;
+    align-items: center;
+    justify-content: center;
+}
+
+.stat-bar {
+    width: 80%;
+    background-color: #4a4a4a; /* gray-600 */
+    height: 80%;
+    border-radius: 9999px;
+    /* border: solid 1px yellow; */
+}
+
+.stat-multiplier {
+    font-size: 1.25rem;
+    /* color: #ffeb57; */
+}
+
+.stat-fill {
+    height: 100%;
+    border-radius: 9999px;
+}
+
+.TNK {
+    background-color: #3b82f6; /* blue-500 */
+    background-color: #bf6f4a;
+}
+
+.DPS {
+    background-color: #ef4444; /* red-500 */
+    background-color: #bf6f4a;
+}
+
+.SUP {
+    background-color: #10b981; /* green-500 */
+    background-color: #bf6f4a;
+}
+
+@media (max-height: 480px) {
+    .avatar-select-card {
+        height: 192px;
+    }
+
+    .avatar-image {
+        width: 52px;
+        height: 52px;
+    }
+}

@@ -1,5 +1,5 @@
-import Phaser from 'phaser';
-import { fetchGotchiSVGs, Aavegotchi } from './FetchGotchis';
+import Phaser from "phaser";
+import { fetchGotchiSVGs, Aavegotchi } from "./FetchGotchis";
 
 const GAME_WIDTH = 1920;
 const GAME_HEIGHT = 1200;
@@ -8,7 +8,7 @@ const MAX_CONCURRENT_ENEMIES = 1000;
 
 // Reduced for faster response; adjust as needed
 // note a higher value (200) can smooth out crossing over zone boundaries
-const INTERPOLATION_DELAY_MS = 110; 
+const INTERPOLATION_DELAY_MS = 110;
 
 export interface PositionUpdate {
     x: number;
@@ -64,14 +64,14 @@ export interface Enemy {
 
 export interface PoolManager {
     enemy: {
-        body: Phaser.GameObjects.Group,
-        shadow: Phaser.GameObjects.Group,
-        statBar: Phaser.GameObjects.Group,
-        flashSprite: Phaser.GameObjects.Group,
-    },
+        body: Phaser.GameObjects.Group;
+        shadow: Phaser.GameObjects.Group;
+        statBar: Phaser.GameObjects.Group;
+        flashSprite: Phaser.GameObjects.Group;
+    };
     vfx: {
-        circle: Phaser.GameObjects.Group,
-    }
+        circle: Phaser.GameObjects.Group;
+    };
 }
 
 export interface TilemapZone {
@@ -97,8 +97,14 @@ const zoneSize = 256; // 8192px
 export class GameScene extends Phaser.Scene {
     private players: { [id: string]: Player } = {};
     // private enemies: { [id: string]: Enemy } = {};
-    private ws!: WebSocket;
-    private keys!: { W: Phaser.Input.Keyboard.Key; A: Phaser.Input.Keyboard.Key; S: Phaser.Input.Keyboard.Key; D: Phaser.Input.Keyboard.Key; SPACE: Phaser.Input.Keyboard.Key };
+    public ws!: WebSocket;
+    private keys!: {
+        W: Phaser.Input.Keyboard.Key;
+        A: Phaser.Input.Keyboard.Key;
+        S: Phaser.Input.Keyboard.Key;
+        D: Phaser.Input.Keyboard.Key;
+        SPACE: Phaser.Input.Keyboard.Key;
+    };
     private tickTimer = 0;
     private textPool: Phaser.GameObjects.Text[] = [];
     private isConnected = false;
@@ -111,38 +117,49 @@ export class GameScene extends Phaser.Scene {
     private rezoneBatchCounter = 0;
     private rezoneBatchLimit = 20;
 
-    private tilemapZones: { [id: string] : TilemapZone } = {};
+    private tilemapZones: { [id: string]: TilemapZone } = {};
 
     private pools!: PoolManager;
 
-    private enemies: {[id:string]: Enemy} = {}
+    private enemies: { [id: string]: Enemy } = {};
 
-    public getPlayers() { return this.players; }
-    public getLocalPlayerID() { return this.localPlayerID; }
+    public getPlayers() {
+        return this.players;
+    }
+    public getLocalPlayerID() {
+        return this.localPlayerID;
+    }
 
     constructor() {
-        super('GameScene');
+        super("GameScene");
     }
 
     preload() {
         // TILEMAPPING
-        this.load.image('tileset', 'assets/tilemap/tileset.png');
-        this.load.image('terrain', 'assets/tilemap/tilesets/terrain.png');
-        this.load.tilemapTiledJSON('mmorpg', 'assets/tilemap/mmorpg.json');
-        this.load.tilemapTiledJSON('default', 'assets/tilemap/default.json');
-        this.load.tilemapTiledJSON('yield_fields_1', 'assets/tilemap/maps/yield_fields_1.json')
+        this.load.image("tileset", "assets/tilemap/tileset.png");
+        this.load.image("terrain", "assets/tilemap/tilesets/terrain.png");
+        this.load.tilemapTiledJSON("mmorpg", "assets/tilemap/mmorpg.json");
+        this.load.tilemapTiledJSON("default", "assets/tilemap/default.json");
+        this.load.tilemapTiledJSON(
+            "yield_fields_1",
+            "assets/tilemap/maps/yield_fields_1.json"
+        );
 
         // FONTS
-        this.load.font('Pixelar', 'assets/fonts/pixelar/PixelarRegular.ttf');
-        
+        this.load.font("Pixelar", "assets/fonts/pixelar/PixelarRegular.ttf");
+
         // ENEMIES (& THEIR SHADOWS)
-        this.load.atlas('enemies', 'assets/enemies/enemies.png', 'assets/enemies/enemies.json');
+        this.load.atlas(
+            "enemies",
+            "assets/enemies/enemies.png",
+            "assets/enemies/enemies.json"
+        );
 
         // MISC
-        this.load.image('gotchi_placeholder', '/assets/gotchi_placeholder.png');
+        this.load.image("gotchi_placeholder", "/assets/gotchi_placeholder.png");
     }
 
-    create(){
+    create() {
         if (this.input.keyboard === null) return;
 
         this.keys = {
@@ -150,7 +167,9 @@ export class GameScene extends Phaser.Scene {
             A: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.A),
             S: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.S),
             D: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D),
-            SPACE: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
+            SPACE: this.input.keyboard.addKey(
+                Phaser.Input.Keyboard.KeyCodes.SPACE
+            ),
         };
 
         this.activeZoneList = {
@@ -158,43 +177,52 @@ export class GameScene extends Phaser.Scene {
             xAxisZoneId: -1000,
             yAxisZoneId: -1000,
             diagonalZoneId: -1000,
-        }
+        };
 
         // init body pool
         var enemyBodyPool = this.add.group({
             maxSize: MAX_CONCURRENT_ENEMIES,
             classType: Phaser.GameObjects.Sprite,
-            createCallback: spriteGameObject => {
+            createCallback: (spriteGameObject) => {
                 var sprite = spriteGameObject as Phaser.GameObjects.Sprite;
-                sprite.setTexture('enemies'); // Single texture atlas for all bodies
+                sprite.setTexture("enemies"); // Single texture atlas for all bodies
                 sprite.setVisible(false); // Hidden until assigned
                 sprite.setActive(false); // Inactive until assigned
                 sprite.setDepth(500);
-                sprite.setFrame('easy.png');
+                sprite.setFrame("easy.png");
                 sprite.setScale(1);
                 sprite.setOrigin(0.5, 1);
-
-            }
+            },
         });
-        enemyBodyPool.createMultiple({ key: 'enemies', quantity: MAX_CONCURRENT_ENEMIES, active: false, visible: false });
+        enemyBodyPool.createMultiple({
+            key: "enemies",
+            quantity: MAX_CONCURRENT_ENEMIES,
+            active: false,
+            visible: false,
+        });
 
         // Initialize shadow pool
         var enemyShadowPool = this.add.group({
             maxSize: MAX_CONCURRENT_ENEMIES,
             classType: Phaser.GameObjects.Sprite,
-            createCallback: spriteGameObject => {
+            createCallback: (spriteGameObject) => {
                 var sprite = spriteGameObject as Phaser.GameObjects.Sprite;
-                sprite.setTexture('enemies'); // Single texture atlas for all shadows
+                sprite.setTexture("enemies"); // Single texture atlas for all shadows
                 sprite.setVisible(false); // Hidden until assigned
                 sprite.setActive(false); // Inactive until assigned
                 sprite.setDepth(499);
                 sprite.setAlpha(0.5);
-                sprite.setFrame('shadow.png');
+                sprite.setFrame("shadow.png");
                 sprite.setScale(1);
                 sprite.setOrigin(0.5, 0.5);
-            }
+            },
         });
-        enemyShadowPool.createMultiple({ key: 'enemies', quantity: MAX_CONCURRENT_ENEMIES, active: false, visible: false });
+        enemyShadowPool.createMultiple({
+            key: "enemies",
+            quantity: MAX_CONCURRENT_ENEMIES,
+            active: false,
+            visible: false,
+        });
 
         // Initialize rectangle pool
         var enemyStatBarPool = this.add.group({
@@ -209,49 +237,60 @@ export class GameScene extends Phaser.Scene {
                 rect.setDepth(501);
                 rect.setAlpha(1);
                 rect.setOrigin(0.5, 1);
-            }
+            },
         });
 
         // Pre-create all rectangles
         enemyStatBarPool.createMultiple({
-            key: '',
+            key: "",
             quantity: MAX_CONCURRENT_ENEMIES,
             active: false,
-            visible: false
+            visible: false,
         });
 
         // Initialize flashSprite pool
         var enemyFlashSpritePool = this.add.group({
             maxSize: MAX_CONCURRENT_ENEMIES,
             classType: Phaser.GameObjects.Sprite,
-            createCallback: flashSpriteGameObject => {
-                var flashSprite = flashSpriteGameObject as Phaser.GameObjects.Sprite;
-                flashSprite.setTexture('enemies'); // Single texture atlas for all shadows
+            createCallback: (flashSpriteGameObject) => {
+                var flashSprite =
+                    flashSpriteGameObject as Phaser.GameObjects.Sprite;
+                flashSprite.setTexture("enemies"); // Single texture atlas for all shadows
                 flashSprite.setVisible(false); // Hidden until assigned
                 flashSprite.setActive(false); // Inactive until assigned
                 flashSprite.setDepth(502);
                 flashSprite.setAlpha(0);
-                flashSprite.setFrame('easy.png');
+                flashSprite.setFrame("easy.png");
                 flashSprite.setScale(1);
                 flashSprite.setOrigin(0.5, 1);
                 flashSprite.setTintFill(0xffffff);
-            }
+            },
         });
-        enemyFlashSpritePool.createMultiple({ key: 'enemies', quantity: MAX_CONCURRENT_ENEMIES, active: false, visible: false });
+        enemyFlashSpritePool.createMultiple({
+            key: "enemies",
+            quantity: MAX_CONCURRENT_ENEMIES,
+            active: false,
+            visible: false,
+        });
 
         // create circle pools
         var circlePool = this.add.group({
             maxSize: 300,
             classType: Phaser.GameObjects.Arc,
-            createCallback: circleGameObject => {
+            createCallback: (circleGameObject) => {
                 var circle = circleGameObject as Phaser.GameObjects.Arc;
                 circle.setActive(false);
                 circle.setVisible(false);
                 circle.setRadius(1);
-                circle.setFillStyle(0xffffff, 1)
-            }
+                circle.setFillStyle(0xffffff, 1);
+            },
         });
-        circlePool.createMultiple({key: "", quantity: 300, active: false, visible: false });
+        circlePool.createMultiple({
+            key: "",
+            quantity: 300,
+            active: false,
+            visible: false,
+        });
 
         // add all pools to the overall pool list
         this.pools = {
@@ -263,46 +302,42 @@ export class GameScene extends Phaser.Scene {
             },
             vfx: {
                 circle: circlePool,
-            }
-        }
+            },
+        };
 
+        this.resizeGame();
+        window.addEventListener("resize", () => this.resizeGame());
+    }
 
-        // this.createTilemap();
-
-        this.ws = new WebSocket("ws://localhost:8080/ws");
+    setWebSocket(ws: WebSocket) {
+        // this.ws = new WebSocket("ws://localhost:8080/ws");
+        this.ws = ws;
         this.ws.onopen = () => {
-            console.log('Connected to server');
+            console.log("Connected to server");
             this.isConnected = true;
 
             this.ws.onmessage = (event) => {
                 const messages = JSON.parse(event.data);
                 if (!Array.isArray(messages)) {
-                    console.error("Unexpected WebSocket message format:", messages);
+                    console.error(
+                        "Unexpected WebSocket message format:",
+                        messages
+                    );
                     return; // Stop execution if it's not an array
                 }
 
-                messages.forEach((msg:any) => {
-                    switch (msg.type){
-                        case 'welcome':
+                messages.forEach((msg: any) => {
+                    switch (msg.type) {
+                        case "welcome":
                             this.handleWelcome(msg.data);
-                        break;
-                        case 'activeZones':
+                            break;
+                        case "activeZones":
                             this.handleActiveZoneList(msg.data);
                             break;
-                        // case 'playerUpdates':
-                        //     msg.data.forEach((update:any) => {
-                        //         this.addOrUpdatePlayer(update);
-                        //     });
-                        // break;
-                        // case 'enemyUpdates':
-                        //     msg.data.forEach((update:any) => {
-                        //         this.addOrUpdateEnemy(update);
-                        //     });
-                        //     break;
-                        case 'playerUpdate':
+                        case "playerUpdate":
                             this.addOrUpdatePlayer(msg.data);
-                        break;
-                        case 'enemyUpdate':
+                            break;
+                        case "enemyUpdate":
                             this.addOrUpdateEnemy(msg.data);
                             break;
                         case `abilityEffect`:
@@ -310,74 +345,82 @@ export class GameScene extends Phaser.Scene {
                             break;
                         case `telegraphWarning`:
                             this.handleTelegraphWarning(msg.data);
-                        break;
+                            break;
 
-                        default: 
+                        default:
                             console.log("No event handler for: ", msg);
-                        break;
+                            break;
                     }
 
                     this.rezoneBatchCounter = 0;
                 });
-            }
+            };
 
-            this.ws.onerror = (e) => console.error('WebSocket error:', e);
+            this.ws.onerror = (e) => console.error("WebSocket error:", e);
             this.ws.onclose = () => {
-                console.log('WebSocket closed');
+                console.log("WebSocket closed");
                 this.isConnected = false;
             };
-        }
-
-        this.resizeGame();
-        window.addEventListener('resize', () => this.resizeGame());
+        };
     }
 
     handleTelegraphWarning(telegraphWarning: any) {
-        const { ability, casterId, targetId, impactX, impactY, radius, duration } = telegraphWarning;
+        const {
+            ability,
+            casterId,
+            targetId,
+            impactX,
+            impactY,
+            radius,
+            duration,
+        } = telegraphWarning;
 
         var player = this.players[casterId];
         var enemy = this.enemies[casterId];
 
         if (player) {
-
-        }
-        else if (enemy) {
-            this.showFireballTelegraphWarning(impactX, impactY, radius, duration, "enemy");
+        } else if (enemy) {
+            this.showFireballTelegraphWarning(
+                impactX,
+                impactY,
+                radius,
+                duration,
+                "enemy"
+            );
         }
     }
 
-    handleAbilityEffect(abilityEffect: any){
-        const {ability, casterId, damage, hp, targetId, impactX, impactY } = abilityEffect;
+    handleAbilityEffect(abilityEffect: any) {
+        const { ability, casterId, damage, hp, targetId, impactX, impactY } =
+            abilityEffect;
         // console.log(data);
-        switch (ability){
+        switch (ability) {
             case "HammerSwing":
                 var enemy = this.enemies[casterId];
                 var player = this.players[casterId];
-                if (enemy && enemy.bodySprite){
+                if (enemy && enemy.bodySprite) {
                     // console.log("showHammerSwing()");
-                    this.showHammerSwing(impactX, impactY, 'enemy');
-                }
-                else if (player && player.bodySprite){
+                    this.showHammerSwing(impactX, impactY, "enemy");
+                } else if (player && player.bodySprite) {
                     // console.log("showHammerSwing() for player");
-                    this.showHammerSwing(impactX, impactY, 'player');
+                    this.showHammerSwing(impactX, impactY, "player");
                 }
-            break;
-            default: break;
+                break;
+            default:
+                break;
         }
     }
-
-
 
     handleWelcome(datum: any) {
         const { playerId, zones } = datum;
         this.localPlayerID = playerId;
-        console.log("Welcome ", this.localPlayerID);
+        console.log("Welcome ", this.localPlayerID, zones);
 
         let maxX = 0;
         let maxY = 0;
 
         zones.forEach((zone: any) => {
-            const {id, tilemapRef, worldX, worldY } = zone;
+            const { id, tilemapRef, worldX, worldY } = zone;
             this.createTilemapZone(id, tilemapRef, worldX, worldY);
 
             if (worldX > maxX) maxX = worldX;
@@ -385,16 +428,22 @@ export class GameScene extends Phaser.Scene {
         });
 
         // set camera extents to the max world positions + a zone width/height
-        this.cameras.main.setBounds(0, 0, maxX + zoneSize*tileSize, maxY + zoneSize*tileSize);
-
+        this.cameras.main.setBounds(
+            0,
+            0,
+            maxX + zoneSize * tileSize,
+            maxY + zoneSize * tileSize
+        );
     }
 
-    handleActiveZoneList(datum: any){
-        const {currentZoneId, xAxisZoneId, yAxisZoneId, diagonalZoneId } = datum;
+    handleActiveZoneList(datum: any) {
+        const { currentZoneId, xAxisZoneId, yAxisZoneId, diagonalZoneId } =
+            datum;
 
         if (!this.activeZoneList) return;
 
-        if (this.activeZoneList.currentZoneId !== currentZoneId &&
+        if (
+            this.activeZoneList.currentZoneId !== currentZoneId &&
             this.activeZoneList.currentZoneId !== xAxisZoneId &&
             this.activeZoneList.currentZoneId !== yAxisZoneId &&
             this.activeZoneList.currentZoneId !== diagonalZoneId
@@ -402,7 +451,8 @@ export class GameScene extends Phaser.Scene {
             this.releasePoolSpritesOfZone(this.activeZoneList.currentZoneId);
         }
 
-        if (this.activeZoneList.xAxisZoneId !== currentZoneId &&
+        if (
+            this.activeZoneList.xAxisZoneId !== currentZoneId &&
             this.activeZoneList.xAxisZoneId !== xAxisZoneId &&
             this.activeZoneList.xAxisZoneId !== yAxisZoneId &&
             this.activeZoneList.xAxisZoneId !== diagonalZoneId
@@ -410,7 +460,8 @@ export class GameScene extends Phaser.Scene {
             this.releasePoolSpritesOfZone(this.activeZoneList.xAxisZoneId);
         }
 
-        if (this.activeZoneList.yAxisZoneId !== currentZoneId &&
+        if (
+            this.activeZoneList.yAxisZoneId !== currentZoneId &&
             this.activeZoneList.yAxisZoneId !== xAxisZoneId &&
             this.activeZoneList.yAxisZoneId !== yAxisZoneId &&
             this.activeZoneList.yAxisZoneId !== diagonalZoneId
@@ -418,7 +469,8 @@ export class GameScene extends Phaser.Scene {
             this.releasePoolSpritesOfZone(this.activeZoneList.yAxisZoneId);
         }
 
-        if (this.activeZoneList.diagonalZoneId !== currentZoneId &&
+        if (
+            this.activeZoneList.diagonalZoneId !== currentZoneId &&
             this.activeZoneList.diagonalZoneId !== xAxisZoneId &&
             this.activeZoneList.diagonalZoneId !== yAxisZoneId &&
             this.activeZoneList.diagonalZoneId !== diagonalZoneId
@@ -431,10 +483,10 @@ export class GameScene extends Phaser.Scene {
             xAxisZoneId: xAxisZoneId,
             yAxisZoneId: yAxisZoneId,
             diagonalZoneId: diagonalZoneId,
-        }
+        };
     }
 
-    releasePoolSpritesOfZone(zoneId: number){
+    releasePoolSpritesOfZone(zoneId: number) {
         // Guard against undefined pools
         if (this.pools && this.pools.enemy) {
             // Deactivate all existing enemy sprites instead of clearing pools
@@ -450,7 +502,9 @@ export class GameScene extends Phaser.Scene {
                         enemy.shadowSprite = null;
                     }
                     if (enemy.flashSprite) {
-                        this.pools.enemy.flashSprite.killAndHide(enemy.flashSprite);
+                        this.pools.enemy.flashSprite.killAndHide(
+                            enemy.flashSprite
+                        );
                         enemy.flashSprite = null;
                     }
                     if (enemy.hpBar) {
@@ -462,143 +516,42 @@ export class GameScene extends Phaser.Scene {
                 }
             }
         } else {
-            console.warn('Pools not initialized yet, skipping zone change cleanup');
+            console.warn(
+                "Pools not initialized yet, skipping zone change cleanup"
+            );
         }
     }
 
-    /*
-    create() {
-        if (this.input.keyboard === null) return;
-
-        this.keys = {
-            W: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W),
-            A: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.A),
-            S: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.S),
-            D: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D),
-            SPACE: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
-        };
-
-        this.createTilemap();
-
-        for (let i = 0; i < 10; i++) {
-            const circle = this.add.graphics();
-            circle.fillStyle(0xff0000, 0);
-            circle.fillCircle(0, 0, 128);
-            circle.setVisible(false);
-            this.circlePool.push(circle);
-
-            const text = this.add.text(0, 0, '', { fontSize: '16px', color: '#ff0000' }).setVisible(false);
-            this.textPool.push(text);
-        }
-
-        this.ws = new WebSocket('ws://localhost:8080/ws');
-        this.ws.onopen = () => {
-            console.log('Connected to server');
-            this.isConnected = true;
-
-            this.ws.onmessage = (e) => {
-                let msg;
-                try {
-                    msg = JSON.parse(e.data);
-                } catch (err) {
-                    console.error('Failed to parse message:', err, 'Data:', e.data);
-                    return;
-                }
-                // let data = msg.data;
-                console.log(msg);
-
-                switch (msg.type){
-                    case "welcome":
-                        this.localPlayerID = msg.data.playerID
-                        console.log("localPlayerID: ", this.localPlayerID);
-                        break;
-                    case "playerUpdates":
-                        const {zone,playerUpdateData} = msg.data;
-                        // console.log("Zone: ", msg.zone, " playerUpdates");
-                        playerUpdateData.forEach((playerUpdateDatum: any) => {
-                            // console.log("playerUpdate: ", playerUpdateDatum);
-                            this.addOrUpdatePlayer(playerUpdateDatum);
-                        });
-                        break;
-                    default: break;
-                }
-
-                
-                if (typeof data === 'string') {
-                    try {
-                        data = JSON.parse(data);
-                    } catch (err) {
-                        console.error('Failed to parse nested data:', err, 'Data:', data);
-                        return;
-                    }
-                }
-                switch (msg.type) {
-                    case "welcome":
-                        this.localPlayerID = data.id; // Now correctly accesses parsed id
-                        console.log("Local Player ID:", this.localPlayerID);
-                        this.followedPlayerID = "";
-                        break;
-                    case "playerUpdates":
-                        if (Array.isArray(data)) {
-                            data.forEach(update => this.addOrUpdatePlayer(update));
-                        }
-                        break;
-                    case "attackUpdates":
-                        if (Array.isArray(data)) {
-                            data.forEach(datum => this.handleAttackUpdates(datum));
-                        }
-                        break;
-                    case "damageUpdates":
-                        if (Array.isArray(data)) {
-                            data.forEach(datum => this.handleDamageUpdate(datum));
-                        }
-                        break;
-                    case "playerDisconnected":
-                        this.removePlayer(data.id);
-                        break;
-                    case "enemyUpdates":
-                        if (Array.isArray(data)) {
-                            data.forEach(datum => this.addOrUpdateEnemy(datum));
-                        }
-                        break;
-                    case "levelUp":
-                        this.registry.events.emit('levelUp', data);
-                        this.handleLevelUp(data);
-                        break;
-                }
-                        
-            };
-            this.ws.onerror = (e) => console.error('WebSocket error:', e);
-            this.ws.onclose = () => {
-                console.log('WebSocket closed');
-                this.isConnected = false;
-            };
-        };
-
-        this.resizeGame();
-        window.addEventListener('resize', () => this.resizeGame());
-
-        this.registry.get('game')?.events.on('selectGotchi', this.onGotchiSelected, this);
-    }
-    */
-
-    addOrUpdatePlayer(datum: any){
-        const {playerId, x, y, zoneId, timestamp,
-            maxHp, hp, maxAp, ap,
-            gameXp, gameLevel, gameXpOnCurrentLevel, gameXpTotalForNextLevel,
+    addOrUpdatePlayer(datum: any) {
+        const {
+            playerId,
+            x,
+            y,
+            zoneId,
+            timestamp,
+            maxHp,
+            hp,
+            maxAp,
+            ap,
+            gameXp,
+            gameLevel,
+            gameXpOnCurrentLevel,
+            gameXpTotalForNextLevel,
         } = datum;
 
         // NEW PLAYER
-        if (!this.players[playerId]){
-            const newPlayerSprite = this.add.sprite(x, y, 'gotchi_placeholder')
+        if (!this.players[playerId]) {
+            const newPlayerSprite = this.add
+                .sprite(x, y, "gotchi_placeholder")
                 .setDepth(1000)
                 .setScale(0.75)
-                .setOrigin(0.5,1)
+                .setOrigin(0.5, 1);
 
-            const flashSprite = this.add.sprite(x, y, 'gotchi_placeholder')
+            const flashSprite = this.add
+                .sprite(x, y, "gotchi_placeholder")
                 .setDepth(1001)
                 .setScale(0.75)
-                .setOrigin(0.5,1)
+                .setOrigin(0.5, 1)
                 .setTintFill(0xf5555d)
                 .setAlpha(0)
                 .setVisible(true);
@@ -627,19 +580,19 @@ export class GameScene extends Phaser.Scene {
         }
 
         // GENERAL UPDATES
-        if (this.players[playerId]){
+        if (this.players[playerId]) {
             // position buffer updates
             const player = this.players[playerId];
             player.positionBuffer.push({
                 x: x,
                 y: y,
-                timestamp: timestamp
+                timestamp: timestamp,
             });
 
             while (player.positionBuffer.length > MAX_POSITION_BUFFER_LENGTH) {
                 player.positionBuffer.shift();
             }
-            
+
             // stats
             player.maxHp = maxHp;
             player.hp = hp;
@@ -652,13 +605,15 @@ export class GameScene extends Phaser.Scene {
             player.gameXpTotalForNextLevel = gameXpTotalForNextLevel;
 
             // check for damage update
-            if (player.hp < player.previousHp){
-                if (this.isPlayerOnScreen(player)){
-                    this.showDamageToPlayerPopupText(player.previousHp - player.hp, playerId);
+            if (player.hp < player.previousHp) {
+                if (this.isPlayerOnScreen(player)) {
+                    this.showDamageToPlayerPopupText(
+                        player.previousHp - player.hp,
+                        playerId
+                    );
                     if (player.flashSprite) {
-                         this.alphaFlashSprite(player.flashSprite);
+                        this.alphaFlashSprite(player.flashSprite);
                     }
-
                 }
                 player.previousHp = player.hp;
             }
@@ -670,7 +625,12 @@ export class GameScene extends Phaser.Scene {
         if (this.localPlayerID === playerId) {
             if (!this.followedPlayerID) {
                 this.followedPlayerID = this.localPlayerID;
-                this.cameras.main.startFollow(this.players[playerId].bodySprite, false, 0.1, 0.1)
+                this.cameras.main.startFollow(
+                    this.players[playerId].bodySprite,
+                    false,
+                    0.1,
+                    0.1
+                );
             }
         }
     }
@@ -740,11 +700,13 @@ export class GameScene extends Phaser.Scene {
             }
             console.log("enemies length: ", i);
         } else {
-            console.warn('Pools not initialized yet, skipping zone change cleanup');
+            console.warn(
+                "Pools not initialized yet, skipping zone change cleanup"
+            );
         }
     }
 
-/*
+    /*
     addOrUpdatePlayer(data: any) {
         if (!data.id || !data.timestamp) return;
 
@@ -786,19 +748,23 @@ export class GameScene extends Phaser.Scene {
 
     addOrUpdateEnemy(data: any) {
         // console.log(data);
-        const {enemyId, x, y, zoneId, timestamp, type, maxHp, hp } = data;
+        const { enemyId, x, y, zoneId, timestamp, type, maxHp, hp } = data;
 
         // see if the received enemy is part of one of the active zones
-        var isEnemyInAnActiveZone = zoneId === this.activeZoneList.currentZoneId ||
+        var isEnemyInAnActiveZone =
+            zoneId === this.activeZoneList.currentZoneId ||
             zoneId === this.activeZoneList.xAxisZoneId ||
             zoneId === this.activeZoneList.yAxisZoneId ||
             zoneId === this.activeZoneList.diagonalZoneId;
 
-        if (this.rezoneBatchCounter >= this.rezoneBatchLimit || !isEnemyInAnActiveZone) {
+        if (
+            this.rezoneBatchCounter >= this.rezoneBatchLimit ||
+            !isEnemyInAnActiveZone
+        ) {
             return;
         }
 
-        var enemy = this.enemies[enemyId]
+        var enemy = this.enemies[enemyId];
         var hasPoolSprites = enemy ? enemy.hasPoolSprites : true;
 
         // NEW ENEMY or DOES NOT HAVE POOL SPRITES
@@ -809,29 +775,29 @@ export class GameScene extends Phaser.Scene {
 
             const bodySprite = this.pools.enemy.body.get();
             if (bodySprite) {
-                bodySprite.setVisible(true)
+                bodySprite
+                    .setVisible(true)
                     .setActive(true)
                     .setFrame(`${type}.png`);
             }
 
             const shadowSprite = this.pools.enemy.shadow.get();
-            if (shadowSprite){
+            if (shadowSprite) {
                 // console.log("show shadow sprite");
-                shadowSprite.setVisible(true)
-                    .setActive(true)
+                shadowSprite.setVisible(true).setActive(true);
             }
 
             const flashSprite = this.pools.enemy.flashSprite.get();
             if (flashSprite) {
-                flashSprite.setVisible(true)
+                flashSprite
+                    .setVisible(true)
                     .setActive(true)
-                    .setFrame(`${type}.png`)
+                    .setFrame(`${type}.png`);
             }
 
             const hpBar = this.pools.enemy.statBar.get();
             if (hpBar) {
-                hpBar.setVisible(true)
-                    .setActive(true)
+                hpBar.setVisible(true).setActive(true);
             }
 
             if (bodySprite && shadowSprite) {
@@ -860,7 +826,7 @@ export class GameScene extends Phaser.Scene {
             enemy.positionBuffer.push({
                 x: x,
                 y: y,
-                timestamp: data.timestamp
+                timestamp: data.timestamp,
             });
 
             while (enemy.positionBuffer.length > MAX_POSITION_BUFFER_LENGTH) {
@@ -872,7 +838,7 @@ export class GameScene extends Phaser.Scene {
 
             // update hp bar
             if (enemy.hpBar) {
-                enemy.hpBar.width = 32 * hp / maxHp;
+                enemy.hpBar.width = (32 * hp) / maxHp;
             }
 
             if (data.direction !== undefined) {
@@ -882,9 +848,13 @@ export class GameScene extends Phaser.Scene {
             // check for damage update
             if (enemy.hp < enemy.previousHp) {
                 if (this.isEnemyOnScreen(enemy)) {
-                    this.showDamageToEnemyPopupText(enemy.previousHp - enemy.hp, enemyId);
-                    if (enemy.flashSprite) this.alphaFlashSprite(enemy.flashSprite);
-                } 
+                    this.showDamageToEnemyPopupText(
+                        enemy.previousHp - enemy.hp,
+                        enemyId
+                    );
+                    if (enemy.flashSprite)
+                        this.alphaFlashSprite(enemy.flashSprite);
+                }
                 enemy.previousHp = enemy.hp;
             }
         }
@@ -905,16 +875,20 @@ export class GameScene extends Phaser.Scene {
         var player = this.players[playerId];
         if (!player) return;
 
-        const {x, y} = player.bodySprite;
+        const { x, y } = player.bodySprite;
         const offsetY = -64;
         const textColor = "red";
 
-        const damageText = this.getPooledText(x, y + offsetY, damageValue.toString());
+        const damageText = this.getPooledText(
+            x,
+            y + offsetY,
+            damageValue.toString()
+        );
         damageText.setStyle({
-            fontFamily: 'Pixelar',
-            fontSize: '24px',
+            fontFamily: "Pixelar",
+            fontSize: "24px",
             color: textColor,
-            stroke: '#000000',
+            stroke: "#000000",
             strokeThickness: 1,
         });
         damageText.setOrigin(0.5, 0.5).setDepth(3000);
@@ -924,22 +898,22 @@ export class GameScene extends Phaser.Scene {
             targets: damageText,
             y: damageText.y - 20,
             duration: 1000,
-            ease: 'Back.easeOut',
+            ease: "Back.easeOut",
         });
 
         // horizontal tween
         this.tweens.add({
             targets: damageText,
-            x: damageText.x + (Math.random()*2 - 1)*16,
+            x: damageText.x + (Math.random() * 2 - 1) * 16,
             duration: 1000,
-        })
+        });
 
         // fade tween
         this.tweens.add({
             targets: damageText,
             alpha: 0,
             duration: 1000,
-            ease: 'Quint.easeIn',
+            ease: "Quint.easeIn",
             onComplete: () => damageText.setVisible(false),
         });
     }
@@ -948,16 +922,20 @@ export class GameScene extends Phaser.Scene {
         var enemy = this.enemies[enemyId];
         if (!enemy || !enemy.bodySprite) return;
 
-        const {x, y} = enemy.bodySprite;
+        const { x, y } = enemy.bodySprite;
         const offsetY = -48;
         const textColor = "white";
 
-        const damageText = this.getPooledText(x, y + offsetY, damageValue.toString());
+        const damageText = this.getPooledText(
+            x,
+            y + offsetY,
+            damageValue.toString()
+        );
         damageText.setStyle({
-            fontFamily: 'Pixelar',
-            fontSize: '24px',
+            fontFamily: "Pixelar",
+            fontSize: "24px",
             color: textColor,
-            stroke: '#000000',
+            stroke: "#000000",
             strokeThickness: 1,
         });
         damageText.setOrigin(0.5, 0.5).setDepth(3000);
@@ -967,27 +945,30 @@ export class GameScene extends Phaser.Scene {
             targets: damageText,
             y: damageText.y - 20,
             duration: 1000,
-            ease: 'Back.easeOut',
+            ease: "Back.easeOut",
         });
 
         // horizontal tween
         this.tweens.add({
             targets: damageText,
-            x: damageText.x + (Math.random()*2 - 1)*16,
+            x: damageText.x + (Math.random() * 2 - 1) * 16,
             duration: 1000,
-        })
+        });
 
         // fade tween
         this.tweens.add({
             targets: damageText,
             alpha: 0,
             duration: 1000,
-            ease: 'Quint.easeIn',
+            ease: "Quint.easeIn",
             onComplete: () => damageText.setVisible(false),
         });
     }
 
-    alphaFlashSprite(sprite: Phaser.GameObjects.Sprite, duration_ms: number = 250) {
+    alphaFlashSprite(
+        sprite: Phaser.GameObjects.Sprite,
+        duration_ms: number = 250
+    ) {
         if (!sprite || !sprite.scene) return;
 
         sprite.scene.tweens.add({
@@ -998,7 +979,7 @@ export class GameScene extends Phaser.Scene {
             ease: `Quad.easeInOut`,
             onComplete: () => {
                 sprite.setAlpha(0);
-            }
+            },
         });
     }
 
@@ -1008,35 +989,35 @@ export class GameScene extends Phaser.Scene {
 
         const x = player.bodySprite.x;
         const y = player.bodySprite.y;
-        const textColor = '#ffffff';
+        const textColor = "#ffffff";
         const offsetY = 128 + 64;
 
         const levelUpText = this.getPooledText(x, y - offsetY, "Level Up!");
         levelUpText.setStyle({
-            fontFamily: 'Pixelar',
-            fontSize: '48px',
+            fontFamily: "Pixelar",
+            fontSize: "48px",
             color: textColor,
-            stroke: '#000000',
+            stroke: "#000000",
             strokeThickness: 1,
         });
         levelUpText.setOrigin(0.5, 0.5).setDepth(3000);
 
         const atkText = this.getPooledText(x, y - offsetY + 40, "ATK +10%");
         atkText.setStyle({
-            fontFamily: 'Pixelar',
-            fontSize: '24px',
+            fontFamily: "Pixelar",
+            fontSize: "24px",
             color: textColor,
-            stroke: '#000000',
+            stroke: "#000000",
             strokeThickness: 1,
         });
         atkText.setOrigin(0.5, 0.5).setDepth(3000);
 
         this.tweens.add({
             targets: [levelUpText, atkText],
-            y: '-=20',
+            y: "-=20",
             alpha: 0,
             duration: 3000,
-            ease: 'Quad.easeIn',
+            ease: "Quad.easeIn",
             onComplete: () => {
                 levelUpText.setVisible(false);
                 atkText.setVisible(false);
@@ -1044,7 +1025,16 @@ export class GameScene extends Phaser.Scene {
         });
     }
 
-    createRectExplosion(x: number, y: number, radius = 16, duration = 500, minWidth = 5, maxWidth = 10, minHeight = 5, maxHeight = 10) {
+    createRectExplosion(
+        x: number,
+        y: number,
+        radius = 16,
+        duration = 500,
+        minWidth = 5,
+        maxWidth = 10,
+        minHeight = 5,
+        maxHeight = 10
+    ) {
         for (let i = 0; i < 3; i++) {
             const angle = Phaser.Math.DegToRad(i * 120);
             const distance = Phaser.Math.Between(0, radius);
@@ -1064,7 +1054,7 @@ export class GameScene extends Phaser.Scene {
                 y: rect.y + Math.sin(angle) * radius * 1.5,
                 alpha: 0,
                 duration: duration,
-                ease: 'Cubic.Out',
+                ease: "Cubic.Out",
                 onComplete: () => rect.destroy(),
             });
         }
@@ -1082,13 +1072,19 @@ export class GameScene extends Phaser.Scene {
     //     }
     // }
 
-    showFireballTelegraphWarning(x: number, y: number, radius: number, duration_ms: number, casterType: 'enemy' | 'player') {
+    showFireballTelegraphWarning(
+        x: number,
+        y: number,
+        radius: number,
+        duration_ms: number,
+        casterType: "enemy" | "player"
+    ) {
         const attackColor = casterType === "player" ? 0xffffff : 0x7a09fa;
 
         // const circle = this.getPooledCircle(x, y, radius, attackColor);
         const circle = this.add.circle(x, y, radius, attackColor);
         circle.setAlpha(0).setVisible(true).setDepth(901);
-        circle.setPosition(x,y);
+        circle.setPosition(x, y);
 
         this.tweens.add({
             targets: circle,
@@ -1102,25 +1098,31 @@ export class GameScene extends Phaser.Scene {
                     duration: 500,
                     onComplete: () => {
                         circle.destroy();
-                    }
+                    },
                 });
-            }
+            },
         });
     }
 
-    showHammerSwing(x:number, y:number, casterType: 'enemy' | 'player') {
+    showHammerSwing(x: number, y: number, casterType: "enemy" | "player") {
         const radius = casterType == "player" ? 100 : 70;
         const attackColor = casterType === "player" ? 0xffffff : 0xff0000;
 
         const circle = this.pools.vfx.circle.get();
-        circle.setPosition(x,y);
+        circle.setPosition(x, y);
         circle.setRadius(radius);
         circle.setFillStyle(attackColor);
         circle.setAlpha(0.5).setVisible(true).setDepth(900);
 
         const rectWidth = radius;
         const rectHeight = radius * 0.1;
-        const rectangle = this.add.rectangle(radius * 0.75, 0, rectWidth * 0.5, rectHeight, attackColor);
+        const rectangle = this.add.rectangle(
+            radius * 0.75,
+            0,
+            rectWidth * 0.5,
+            rectHeight,
+            attackColor
+        );
         rectangle.setAlpha(0.9);
 
         const container = this.add.container(x, y, [rectangle]).setDepth(901);
@@ -1131,7 +1133,7 @@ export class GameScene extends Phaser.Scene {
             angle: 360,
             duration: 250,
             repeat: 0,
-            ease: 'Linear',
+            ease: "Linear",
         });
 
         this.tweens.add({
@@ -1153,14 +1155,20 @@ export class GameScene extends Phaser.Scene {
         const attackColor = data.type === "playerAttack" ? 0xffffff : 0xff0000;
 
         const circle = this.pools.vfx.circle.get();
-        circle.setPosition(x,y);
+        circle.setPosition(x, y);
         circle.setRadius(radius);
         circle.setFillStyle(attackColor);
         circle.setAlpha(0.5).setVisible(true).setDepth(900);
 
         const rectWidth = radius;
         const rectHeight = radius * 0.1;
-        const rectangle = this.add.rectangle(radius * 0.75, 0, rectWidth * 0.5, rectHeight, attackColor);
+        const rectangle = this.add.rectangle(
+            radius * 0.75,
+            0,
+            rectWidth * 0.5,
+            rectHeight,
+            attackColor
+        );
         rectangle.setAlpha(0.9);
 
         const container = this.add.container(x, y, [rectangle]).setDepth(901);
@@ -1171,7 +1179,7 @@ export class GameScene extends Phaser.Scene {
             angle: 360,
             duration: 250,
             repeat: 0,
-            ease: 'Linear',
+            ease: "Linear",
         });
 
         this.tweens.add({
@@ -1186,27 +1194,44 @@ export class GameScene extends Phaser.Scene {
         });
     }
 
-    createTilemapZone(zoneId: number, tilemapRef: string, worldX: number, worldY: number) {
+    createTilemapZone(
+        zoneId: number,
+        tilemapRef: string,
+        worldX: number,
+        worldY: number
+    ) {
         // ignore null/0 zone
-        if (zoneId === 0 || tilemapRef === "" || tilemapRef === "nil" || 
-            tilemapRef === "null") return;
-        
+        if (
+            zoneId === 0 ||
+            tilemapRef === "" ||
+            tilemapRef === "nil" ||
+            tilemapRef === "null"
+        )
+            return;
+
         const map = this.make.tilemap({ key: tilemapRef });
         if (!map) {
-            console.error('Tilemap failed to load');
+            console.error("Tilemap failed to load");
             return;
         }
 
         // Dynamically load all tilesets used in the map
         const tilesets: Phaser.Tilemaps.Tileset[] = [];
-        map.tilesets.forEach(tilesetData => {
+        map.tilesets.forEach((tilesetData) => {
             const tilesetName = tilesetData.name;
-            const tileset = map.addTilesetImage(tilesetName, tilesetName, 32, 32);
+            const tileset = map.addTilesetImage(
+                tilesetName,
+                tilesetName,
+                32,
+                32
+            );
             // console.log("added tilest: ", tilesetName);
             if (tileset) {
                 tilesets.push(tileset);
             } else {
-                console.error(`Tileset ${tilesetName} not found for map ${tilemapRef}`);
+                console.error(
+                    `Tileset ${tilesetName} not found for map ${tilemapRef}`
+                );
             }
         });
 
@@ -1220,10 +1245,16 @@ export class GameScene extends Phaser.Scene {
             const layerName = layerData.name;
 
             // Explicitly type properties as TilemapProperty[]
-            const properties = layerData.properties as TilemapProperty[] | undefined;
+            const properties = layerData.properties as
+                | TilemapProperty[]
+                | undefined;
 
-            const isHidden = properties?.find(prop => prop.name === 'isHidden')?.value === true;
-            const isEnemyLayer = properties?.find(prop => prop.name === 'isEnemyLayer')?.value === true;
+            const isHidden =
+                properties?.find((prop) => prop.name === "isHidden")?.value ===
+                true;
+            const isEnemyLayer =
+                properties?.find((prop) => prop.name === "isEnemyLayer")
+                    ?.value === true;
 
             if (isHidden || isEnemyLayer) return;
 
@@ -1233,18 +1264,18 @@ export class GameScene extends Phaser.Scene {
                 layer.setVisible(true);
             }
         });
-    
+
         // map.layers.forEach((layerData, index) => {
         //     const layerName = layerData.name;
-    
+
         //     // Explicitly type properties as TilemapProperty[]
         //     const properties = layerData.properties as TilemapProperty[] | undefined;
-    
+
         //     const isHidden = properties?.find(prop => prop.name === 'isHidden')?.value === true;
         //     const isEnemyLayer = properties?.find(prop => prop.name === 'isEnemyLayer')?.value === true;
-    
+
         //     if (isHidden || isEnemyLayer) return;
-    
+
         //     const layer = map.createLayer(layerName, tileset, worldX, worldY);
         //     if (layer) {
         //         layer.setDepth(index);
@@ -1258,35 +1289,50 @@ export class GameScene extends Phaser.Scene {
             worldX: worldX,
             worldY: worldY,
             tilemap: map,
-        }
+        };
     }
 
     onGotchiSelected(gotchi: Aavegotchi) {
-        this.registry.set('selectedGotchi', gotchi);
-        this.registry.set('initialState', 'spawnPlayer');
+        this.registry.set("selectedGotchi", gotchi);
+        this.registry.set("initialState", "spawnPlayer");
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            this.ws.send(JSON.stringify({ type: 'join', data: { gotchiId: gotchi.id } }));
+            //   this.ws.send(JSON.stringify({ type: 'selectCharacter', data: { characterType: 'gotchi', characterId: gotchi.id } }));
         }
     }
 
     shutdown() {
-        this.registry.get('game')?.events.off('selectGotchi', this.onGotchiSelected, this);
-        console.log('GameScene shutting down');
+        this.registry
+            .get("game")
+            ?.events.off("selectGotchi", this.onGotchiSelected, this);
+        console.log("GameScene shutting down");
     }
 
-    async loadGotchiSVG(gotchiId: string, playerID: string, x: number, y: number) {
+    async loadGotchiSVG(
+        gotchiId: string,
+        playerID: string,
+        x: number,
+        y: number
+    ) {
         try {
             const svgs = await fetchGotchiSVGs(gotchiId);
-            const views: (keyof typeof svgs)[] = ["front", "left", "right", "back"];
-            views.forEach(view => {
-                const svgDataUrl = `data:image/svg+xml;base64,${btoa(svgs[view])}`;
+            const views: (keyof typeof svgs)[] = [
+                "front",
+                "left",
+                "right",
+                "back",
+            ];
+            views.forEach((view) => {
+                const svgDataUrl = `data:image/svg+xml;base64,${btoa(
+                    svgs[view]
+                )}`;
                 this.load.image(`gotchi-${gotchiId}-${view}`, svgDataUrl);
             });
 
-            this.load.once('complete', () => {
+            this.load.once("complete", () => {
                 if (this.players[playerID]) {
                     this.players[playerID].bodySprite.destroy();
-                    this.players[playerID].bodySprite = this.add.sprite(x, y, `gotchi-${gotchiId}-front`)
+                    this.players[playerID].bodySprite = this.add
+                        .sprite(x, y, `gotchi-${gotchiId}-front`)
                         .setDepth(1000)
                         .setScale(0.5)
                         .setName(playerID);
@@ -1295,7 +1341,12 @@ export class GameScene extends Phaser.Scene {
             });
             this.load.start();
         } catch (err) {
-            console.error('Failed to load Gotchi SVG for player', playerID, ':', err);
+            console.error(
+                "Failed to load Gotchi SVG for player",
+                playerID,
+                ":",
+                err
+            );
         }
     }
 
@@ -1320,18 +1371,22 @@ export class GameScene extends Phaser.Scene {
                     D: this.keys.D.isDown,
                     SPACE: this.keys.SPACE.isDown,
                 };
-                const message = JSON.stringify({ type: 'input', data: { 
-                    keys: this.keyState } });
+                const message = JSON.stringify({
+                    type: "input",
+                    data: {
+                        keys: this.keyState,
+                    },
+                });
                 try {
                     this.ws.send(message);
                     // console.log('Sent input for local player:', this.localPlayerID, this.keyState); // Add this log
                 } catch (e) {
-                    console.error('Failed to send input:', e);
+                    console.error("Failed to send input:", e);
                 }
             }
         }
-        
-        this.registry.set('localfps', 1/delta);
+
+        this.registry.set("localfps", 1 / delta);
 
         this.interpolatePlayers();
         this.interpolateEnemies();
@@ -1352,7 +1407,10 @@ export class GameScene extends Phaser.Scene {
 
             let older, newer;
             for (let i = 0; i < buffer.length - 1; i++) {
-                if (buffer[i].timestamp <= targetTime && buffer[i + 1].timestamp >= targetTime) {
+                if (
+                    buffer[i].timestamp <= targetTime &&
+                    buffer[i + 1].timestamp >= targetTime
+                ) {
                     older = buffer[i];
                     newer = buffer[i + 1];
                     break;
@@ -1360,9 +1418,15 @@ export class GameScene extends Phaser.Scene {
             }
 
             if (older && newer) {
-                const alpha = (targetTime - older.timestamp) / (newer.timestamp - older.timestamp);
-                const interpX = older.x + (newer.x - older.x) * Math.min(1, Math.max(0, alpha));
-                const interpY = older.y + (newer.y - older.y) * Math.min(1, Math.max(0, alpha));
+                const alpha =
+                    (targetTime - older.timestamp) /
+                    (newer.timestamp - older.timestamp);
+                const interpX =
+                    older.x +
+                    (newer.x - older.x) * Math.min(1, Math.max(0, alpha));
+                const interpY =
+                    older.y +
+                    (newer.y - older.y) * Math.min(1, Math.max(0, alpha));
                 player.bodySprite.setPosition(interpX, interpY);
                 player.flashSprite.setPosition(interpX, interpY);
             } else if (buffer.length > 0) {
@@ -1381,7 +1445,13 @@ export class GameScene extends Phaser.Scene {
         for (const id in this.enemies) {
             const enemy = this.enemies[id];
             if (!enemy) continue;
-            if (!enemy || !enemy.bodySprite || !enemy.shadowSprite || !enemy.hpBar) continue;
+            if (
+                !enemy ||
+                !enemy.bodySprite ||
+                !enemy.shadowSprite ||
+                !enemy.hpBar
+            )
+                continue;
             if (enemy.positionBuffer.length === 0) continue;
 
             // for testing without interp
@@ -1400,7 +1470,10 @@ export class GameScene extends Phaser.Scene {
 
             let older, newer;
             for (let i = 0; i < buffer.length - 1; i++) {
-                if (buffer[i].timestamp <= targetTime && buffer[i + 1].timestamp >= targetTime) {
+                if (
+                    buffer[i].timestamp <= targetTime &&
+                    buffer[i + 1].timestamp >= targetTime
+                ) {
                     older = buffer[i];
                     newer = buffer[i + 1];
                     break;
@@ -1408,51 +1481,62 @@ export class GameScene extends Phaser.Scene {
             }
 
             if (older && newer) {
-                const alpha = (targetTime - older.timestamp) / (newer.timestamp - older.timestamp);
-                const interpX = older.x + (newer.x - older.x) * Math.min(1, Math.max(0, alpha));
-                const interpY = older.y + (newer.y - older.y) * Math.min(1, Math.max(0, alpha));
+                const alpha =
+                    (targetTime - older.timestamp) /
+                    (newer.timestamp - older.timestamp);
+                const interpX =
+                    older.x +
+                    (newer.x - older.x) * Math.min(1, Math.max(0, alpha));
+                const interpY =
+                    older.y +
+                    (newer.y - older.y) * Math.min(1, Math.max(0, alpha));
                 enemy.bodySprite.setPosition(interpX, interpY);
                 enemy.flashSprite?.setPosition(interpX, interpY);
-                enemy.shadowSprite.setPosition(interpX, interpY + (enemy.bodySprite.height *0));
-                enemy.hpBar.setPosition(interpX, interpY - (enemy.bodySprite.height) * 1.2);
+                enemy.shadowSprite.setPosition(
+                    interpX,
+                    interpY + enemy.bodySprite.height * 0
+                );
+                enemy.hpBar.setPosition(
+                    interpX,
+                    interpY - enemy.bodySprite.height * 1.2
+                );
             } else if (buffer.length > 0) {
                 const last = buffer[buffer.length - 1];
                 enemy.bodySprite.setPosition(last.x, last.y);
                 enemy.flashSprite?.setPosition(last.x, last.y);
-                enemy.shadowSprite.setPosition(last.x, last.y + (enemy.bodySprite.height *0));
-                enemy.hpBar.setPosition(last.x, last.y - (enemy.bodySprite.height) * 1.2);
+                enemy.shadowSprite.setPosition(
+                    last.x,
+                    last.y + enemy.bodySprite.height * 0
+                );
+                enemy.hpBar.setPosition(
+                    last.x,
+                    last.y - enemy.bodySprite.height * 1.2
+                );
             }
 
             i++;
         }
-
     }
 
-    // getPooledCircle(x: number, y: number, radius: number, color: number): Phaser.GameObjects.Graphics {
-    //     let circle = this.circlePool.find(c => !c.visible);
-    //     if (!circle) {
-    //         circle = this.add.graphics();
-    //         this.circlePool.push(circle);
-    //     } else {
-    //         circle.clear();
-    //         circle.setVisible(true);
-    //     }
-    //     circle.fillStyle(color, 0.5);
-    //     circle.fillCircle(x, y, radius);
-    //     return circle;
-    // }
-
     getPooledText(x: number, y: number, text: string): Phaser.GameObjects.Text {
-        let damageText = this.textPool.find(t => !t.visible);
+        let damageText = this.textPool.find((t) => !t.visible);
         if (!damageText) {
-            damageText = this.add.text(x, y, text, { fontSize: '16px', color: '#ff0000' });
+            damageText = this.add.text(x, y, text, {
+                fontSize: "16px",
+                color: "#ff0000",
+            });
             this.textPool.push(damageText);
         } else {
-            damageText.setPosition(x, y).setText(text).setVisible(true).setAlpha(1);
+            damageText
+                .setPosition(x, y)
+                .setText(text)
+                .setVisible(true)
+                .setAlpha(1);
         }
         return damageText;
     }
 
+    /*
     resizeGame() {
         if (!this.cameras.main || !this.scale) return;
 
@@ -1475,5 +1559,39 @@ export class GameScene extends Phaser.Scene {
         canvas.style.left = '50%';
         canvas.style.top = '50%';
         canvas.style.transform = 'translate(-50%, -50%)';
+    }
+    */
+
+    resizeGame() {
+        if (!this.cameras.main || !this.scale) return;
+
+        const availableWidth = window.innerWidth;
+        const availableHeight = window.innerHeight;
+        const aspectRatio = 16 / 10;
+
+        const heightBasedOnAvailableWidth = availableWidth / aspectRatio;
+        const widthBasedOnAvailableHeight = availableHeight * aspectRatio;
+
+        const newWidth = Math.max(availableWidth, widthBasedOnAvailableHeight);
+        const newHeight = newWidth / aspectRatio;
+        console.log(newWidth, newHeight);
+
+        // let newWidth = availableWidth;
+        // let newHeight = availableWidth / aspectRatio;
+        // if (newHeight > availableHeight) {
+        //     newHeight = availableHeight;
+        //     newWidth = newHeight * aspectRatio;
+        // }
+
+        // this.scale.resize(newWidth, newHeight);
+        this.scale.setGameSize(newWidth, newHeight);
+        const zoom = Math.min(newWidth / GAME_WIDTH, newHeight / GAME_HEIGHT);
+        this.cameras.main.setZoom(zoom * 1.5);
+
+        // const canvas = this.game.canvas;
+        // canvas.style.position = 'absolute';
+        // canvas.style.left = '50%';
+        // canvas.style.top = '50%';
+        // canvas.style.transform = 'translate(-50%, -50%)';
     }
 }

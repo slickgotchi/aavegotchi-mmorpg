@@ -1,15 +1,16 @@
-import { useRef, useEffect, useState } from 'react';
-import Phaser from 'phaser';
-import { GameScene } from './phaser/GameScene';
-import './App.css';
-import { ConnectWalletButton } from './components/ConnectWalletButton';
-import { AavegotchiSelectList } from './components/AavegotchiSelectList';
-import { PlayerStatsBars } from './components/PlayerStatsBars';
-import { SelectedGotchiDisplay } from './components/SelectedGotchiDisplay';
-import { Aavegotchi } from './phaser/FetchGotchis';
-import { PlayerXPStatsHUD } from './components/PlayerXPStatHUD';
-import { LevelUpNotification } from './components/LevelUpNotification';
-import { DebugInfo } from './components/DebugInfo';
+import { useRef, useEffect, useState } from "react";
+import Phaser from "phaser";
+import { GameScene } from "./phaser/GameScene";
+import "./App.css";
+import { ConnectWalletButton } from "./components/ConnectWalletButton";
+import { AavegotchiSelectList } from "./components/AavegotchiSelectList";
+import { PlayerStatsBars } from "./components/PlayerStatsBars";
+import { SelectedGotchiDisplay } from "./components/SelectedGotchiDisplay";
+import { Aavegotchi } from "./phaser/FetchGotchis";
+import { PlayerXPStatsHUD } from "./components/PlayerXPStatHUD";
+import { LevelUpNotification } from "./components/LevelUpNotification";
+import { DebugInfo } from "./components/DebugInfo";
+import { IntroModal, PlayableCharacter } from "./components/IntroModal";
 
 const GAME_WIDTH = 1920;
 const GAME_HEIGHT = 1200;
@@ -19,8 +20,15 @@ function App() {
     const containerRef = useRef<HTMLDivElement>(null);
     const [account, setAccount] = useState<string | null>(null);
     const [gotchis, setGotchis] = useState<Aavegotchi[]>([]);
-    const [selectedGotchi, setSelectedGotchi] = useState<Aavegotchi | null>(null);
-    const [gameDimensions, setGameDimensions] = useState({ width: GAME_WIDTH, height: GAME_HEIGHT, left: 0, top: 0 });
+    const [selectedGotchi, setSelectedGotchi] = useState<Aavegotchi | null>(
+        null
+    );
+    const [gameDimensions, setGameDimensions] = useState({
+        width: GAME_WIDTH,
+        height: GAME_HEIGHT,
+        left: 0,
+        top: 0,
+    });
     const [levelUpData, setLevelUpData] = useState<{
         newLevel: number;
         newATK: number;
@@ -28,32 +36,34 @@ function App() {
         gameXpTotalForNextLevel: number;
     } | null>(null);
     const [ws, setWs] = useState<WebSocket | null>(null); // Track WebSocket
+    const [showModal, setShowModal] = useState(true);
 
     useEffect(() => {
         if (!containerRef.current) return;
-    
+
         // Initialize Phaser game
         const config: Phaser.Types.Core.GameConfig = {
             type: Phaser.AUTO,
             parent: containerRef.current,
             scene: [GameScene],
             scale: {
-                mode: Phaser.Scale.FIT,
+                mode: Phaser.Scale.ENVELOP,
                 width: GAME_WIDTH,
                 height: GAME_HEIGHT,
+                autoCenter: Phaser.Scale.CENTER_BOTH,
             },
             pixelArt: true,
         };
-    
+
         if (!gameRef.current) {
             gameRef.current = new Phaser.Game(config);
-            gameRef.current.registry.set('game', gameRef.current);
-            gameRef.current.registry.set('initialState', 'worldOnly');
-            gameRef.current.registry.set('account', null);
-            gameRef.current.registry.set('gotchis', []);
-            gameRef.current.registry.set('selectedGotchi', null);
+            gameRef.current.registry.set("game", gameRef.current);
+            gameRef.current.registry.set("initialState", "worldOnly");
+            gameRef.current.registry.set("account", null);
+            gameRef.current.registry.set("gotchis", []);
+            gameRef.current.registry.set("selectedGotchi", null);
         }
-    
+
         const game = gameRef.current;
 
         // // Initialize WebSocket (similar to GameScene)
@@ -68,10 +78,10 @@ function App() {
         // };
 
         // Listen for level-up event from Phaser
-        game.registry.events.on('levelUp', (data: any) => {
+        game.registry.events.on("levelUp", (data: any) => {
             setLevelUpData(data);
         });
-    
+
         const updateDimensions = () => {
             const canvas = game.canvas;
             if (canvas) {
@@ -84,16 +94,16 @@ function App() {
                 });
             }
         };
-    
+
         // Ensure UI positions correctly on first load
-        setTimeout(updateDimensions, 50);  // Small delay to ensure Phaser canvas is ready
-    
+        setTimeout(updateDimensions, 50); // Small delay to ensure Phaser canvas is ready
+
         let resizeTimeout: NodeJS.Timeout;
-    
+
         const resizeHandler = () => {
             // Update UI instantly while resizing
             updateDimensions();
-    
+
             const availableWidth = window.innerWidth;
             const availableHeight = window.innerHeight;
             const aspectRatio = 16 / 10;
@@ -103,31 +113,43 @@ function App() {
                 newHeight = availableHeight;
                 newWidth = newHeight * aspectRatio;
             }
-    
+
             game.scale.resize(newWidth, newHeight);
 
-
-    
             // Final correction after resize stops
             clearTimeout(resizeTimeout);
             resizeTimeout = setTimeout(updateDimensions, 250);
         };
-    
-        window.addEventListener('resize', resizeHandler);
-        game.events.on('resize', resizeHandler);
-    
+
+        window.addEventListener("resize", resizeHandler);
+        game.events.on("resize", resizeHandler);
+
         return () => {
             if (gameRef.current) {
                 gameRef.current.destroy(true);
                 gameRef.current = null;
             }
-            window.removeEventListener('resize', resizeHandler);
-            game.events.off('resize', resizeHandler);
-            game.registry.events.off('levelUp'); // Cleanup
+            window.removeEventListener("resize", resizeHandler);
+            game.events.off("resize", resizeHandler);
+            game.registry.events.off("levelUp"); // Cleanup
         };
     }, []);
-    
-    const handleAccountChange = (newAccount: string | null, newGotchis: Aavegotchi[]) => {
+
+    const handlePlay = (playableCharacter: PlayableCharacter) => {
+        setShowModal(false);
+        const scene = gameRef.current?.scene.getScenes()[0] as
+            | GameScene
+            | undefined;
+        if (scene) {
+            const ws = new WebSocket("ws://localhost:8080/ws");
+            scene.setWebSocket(ws);
+        }
+    };
+
+    const handleAccountChange = (
+        newAccount: string | null,
+        newGotchis: Aavegotchi[]
+    ) => {
         setAccount(newAccount);
         setGotchis(newGotchis);
         setSelectedGotchi(null); // Reset selection on wallet change
@@ -141,26 +163,15 @@ function App() {
         setLevelUpData(null); // Clear level-up notification after animation
     };
 
-    // Calculate scaled rectangle dimensions and offset
-    const scale = Math.min(gameDimensions.width / GAME_WIDTH, gameDimensions.height / GAME_HEIGHT);
-    const rectWidth = 100 * scale;
-    const rectHeight = 100 * scale;
-    const offsetX = 10 * scale;
-    const offsetY = 10 * scale;
-
-    // Ensure rectangle stays within game window bounds, accounting for canvas position
-    const maxX = gameDimensions.width - rectWidth;
-    const maxY = gameDimensions.height - rectHeight;
-    const finalX = Math.min(offsetX, maxX) + gameDimensions.left; // Add canvas left offset
-    const finalY = Math.min(offsetY, maxY) + gameDimensions.top;  // Add canvas top offset
-
     return (
         <div ref={containerRef} className="game-container">
-            <ConnectWalletButton
-                gameRef={gameRef}
-                onAccountChange={handleAccountChange}
-                gameDimensions={gameDimensions}
-            />
+            {showModal && (
+                <IntroModal
+                    onPlay={handlePlay}
+                    gameDimensions={gameDimensions}
+                />
+            )}
+
             {!selectedGotchi && gotchis.length > 0 && (
                 <AavegotchiSelectList
                     gotchis={gotchis}
@@ -170,14 +181,20 @@ function App() {
                     gameRef={gameRef}
                 />
             )}
-            <PlayerStatsBars gameRef={gameRef} gameDimensions={gameDimensions} />
+            <PlayerStatsBars
+                gameRef={gameRef}
+                gameDimensions={gameDimensions}
+            />
             {selectedGotchi && (
-                <SelectedGotchiDisplay selectedGotchi={selectedGotchi} gameDimensions={gameDimensions} />
+                <SelectedGotchiDisplay
+                    selectedGotchi={selectedGotchi}
+                    gameDimensions={gameDimensions}
+                />
             )}
-            <PlayerXPStatsHUD 
-                gameRef={gameRef} 
+            <PlayerXPStatsHUD
+                gameRef={gameRef}
                 levelUpData={levelUpData}
-                gameDimensions={gameDimensions} 
+                gameDimensions={gameDimensions}
             />
             <DebugInfo
                 gameRef={gameRef}

@@ -39,49 +39,42 @@ export function PlayerStatsBars({ gameRef, gameDimensions }: PlayerStatsBarsProp
         return () => clearInterval(interval);
     }, [gameRef]);
 
-    const scale = Math.min(gameDimensions.width / 1920, gameDimensions.height / 1200);
-    // Use a fixed base width scaled by max values, not arbitrary 450 * 32
-    const barPadding = 4 * scale;
+    const barPadding = 2;
 
-    const hpFillBarWidth = playerStats ? playerStats.maxHp * scale : 450; // Base width for visual consistency
-    const apFillBarWidth = playerStats ? playerStats.maxAp * scale : 450;
-    const fillBarHeight = 32 * scale;
+    const hpFillBarWidth = playerStats ? playerStats.maxHp : 450; // Base width for visual consistency
+    const apFillBarWidth = playerStats ? playerStats.maxAp : 450;
+    const fillBarHeight = 20;
 
     const hpBgBarWidth = hpFillBarWidth + 2*barPadding;  // Static width for HP background
     const apBgBarWidth = apFillBarWidth + 2*barPadding;  // Static width for AP background
     const bgBarHeight = fillBarHeight + 2*barPadding;
 
 
-    const margin = 10 * scale;
-    const padding = 5 * scale;
-
-    const containerX = gameDimensions.left + margin;
-    const containerY = gameDimensions.top + gameDimensions.height - margin - 
-        2*bgBarHeight - padding;
+    const margin = 8;
+    const padding = 4;
 
     if (!playerStats) return null;
 
-    // console.log(playerStats.maxHp);
-
-    const shadow = 0*scale;
-    const blur = 3*scale;
+    const shadow = 0;
+    const blur = 3;
     const textShadow = `${shadow}px ${shadow}px ${blur}px rgba(0,0,0,1)`;
 
     return (
         <div
             style={{
                 position: 'absolute',
-                left: `${containerX}px`,
-                top: `${containerY}px`,
+                left: `${margin}px`,
+                bottom: `${margin}px`,
                 zIndex: 2000,
                 fontFamily: 'Pixelar',
             }}
         >
+            {/* hp bar container */}
             <div
                 style={{
                     position: 'relative',
-                    width: `${hpBgBarWidth}px`, // 2px extra on each side
-                    height: `${bgBarHeight}px`, // 2px extra above and below
+                    width: `${hpBgBarWidth}px`, 
+                    height: `${bgBarHeight}px`, 
                     top: 0,
                     left: 0,
                 }}
