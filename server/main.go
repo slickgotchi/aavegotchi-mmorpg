@@ -44,17 +44,11 @@ func init() {
 	}
 }
 
+// ClientManager manages client connections
 type ClientManager struct {
-	Clients map[string]*websocket.Conn
+    // Add fields as needed (e.g., map of client connections)
+    Clients map[string]*websocket.Conn
 }
-
-func NewClientManager() *ClientManager {
-	return &ClientManager{
-		Clients: make(map[string]*websocket.Conn),
-	}
-}
-
-var clientManager = NewClientManager()
 
 // AddClient stores the connection.
 func (cm *ClientManager) AddClient(sessionID string, conn *websocket.Conn) {
@@ -74,6 +68,32 @@ func (cm *ClientManager) GetClient(playerID string) (*websocket.Conn, bool) {
 	return conn, exists
 }
 
+func NewClientManager() *ClientManager {
+	return &ClientManager{
+		Clients: make(map[string]*websocket.Conn),
+	}
+}
+
+var clientManager = NewClientManager()
+
+// Stats holds common game statistics for both players and enemies
+type Stats struct {
+    MaxHP int
+    HP    int
+    MaxAP int
+    AP    int
+    ATK   int
+}
+
+// Entity is an interface for players and enemies to use abilities
+type Entity interface {
+	GetID() string
+	GetX() float32
+	GetY() float32
+	GetStats() *Stats
+	GetSpriteHeightPixels() float32
+}
+
 // Message is a generic struct for client/server communication
 type Message struct {
 	Type     string      `json:"type"`
@@ -81,7 +101,7 @@ type Message struct {
 	PlayerID string      `json:"-"` // Not serialized to JSON (we add this in our input reading func)
 }
 
-// Zone represents an independent game zone
+// Zone represents a game zone
 type Zone struct {
 	ID         int
 	TilemapRef string
@@ -94,6 +114,7 @@ type Zone struct {
 	Inbound    chan Message
 }
 
+
 // sent to client during welcome message
 type ZoneInfo struct {
 	ID         int     `json:"id"`
@@ -102,13 +123,11 @@ type ZoneInfo struct {
 	WorldY     float32 `json:"worldY"`
 }
 
-// GameServer holds the overall state
+// GameServer represents the game server
 type GameServer struct {
 	Zones map[int]*Zone
 	ClientManager *ClientManager
 }
-
-
 
 // EnemyUpdate represents enemy data sent to clients
 type EnemyUpdate struct {

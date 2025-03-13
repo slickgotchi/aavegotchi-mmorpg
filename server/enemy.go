@@ -8,6 +8,7 @@ import (
 	"time"
 )
 
+/*
 // Stats holds common game statistics for both players and enemies
 type Stats struct {
 	MaxHP int
@@ -16,6 +17,7 @@ type Stats struct {
 	AP    int
 	ATK   int
 }
+*/
 
 // Enemy represents an enemy entity
 type Enemy struct {
@@ -47,6 +49,7 @@ type Enemy struct {
 	AbilityName string  // Name of the ability (for reference)
 }
 
+
 // GetID returns the enemy's ID
 func (e *Enemy) GetID() string {
 	return e.ID
@@ -70,6 +73,7 @@ func (e *Enemy) GetStats() *Stats {
 func (e *Enemy) GetSpriteHeightPixels() float32 {
 	return e.SpriteHeightPixels
 }
+
 
 // NewEnemy creates a new enemy with the given configuration
 func NewEnemy(zoneID int, x, y float32, enemyType string) *Enemy {
