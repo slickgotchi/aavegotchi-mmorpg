@@ -11,19 +11,9 @@ interface PlayerXPStatsProps {
         gameXpOnCurrentLevel: number;
         gameXpTotalForNextLevel: number;
     } | null;
-    gameDimensions: {
-        width: number;
-        height: number;
-        left: number;
-        top: number;
-    };
 }
 
-export function PlayerXPStatsHUD({
-    gameRef,
-    levelUpData,
-    gameDimensions,
-}: PlayerXPStatsProps) {
+export function PlayerXPStatsHUD({ gameRef, levelUpData }: PlayerXPStatsProps) {
     const [playerXPStats, setPlayerXPStats] = useState<Player | null>(null);
     const [isFlashing, setIsFlashing] = useState(false); // State to trigger flash animation
     const [animationKey, setAnimationKey] = useState(0); // Unique key for animation to prevent re-triggering

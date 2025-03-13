@@ -1,17 +1,13 @@
 import Phaser from "phaser";
-import { fetchGotchiSVGs, Aavegotchi } from "./FetchGotchis";
+import { fetchGotchiSVGs } from "./FetchGotchis";
 import { PlayableCharacter } from "../components/IntroModal";
-import { PlayerManager, Player, PositionUpdate } from "./Player";
-import { EnemyManager, Enemy } from "./Enemy";
+import { PlayerManager } from "./Player";
+import { EnemyManager } from "./Enemy";
 import { PoolManager, PoolManager as PoolManagerType } from "./Pools";
-// import { TilemapZone, ActiveZoneList } from "./interfaces";
 import { TilemapZone, ActiveZoneList } from "./interfaces";
 
 const GAME_WIDTH = 1920;
 const GAME_HEIGHT = 1200;
-const MAX_POSITION_BUFFER_LENGTH = 10;
-const MAX_CONCURRENT_ENEMIES = 1000;
-const INTERPOLATION_DELAY_MS = 110;
 
 const tileSize = 32;
 const zoneSize = 256;
@@ -33,7 +29,6 @@ export class GameScene extends Phaser.Scene {
     private keyState = { W: false, A: false, S: false, D: false, SPACE: false };
     private activeZoneList!: ActiveZoneList;
     private tilemapZones: { [id: string]: TilemapZone } = {};
-    private followedPlayerID: string = ""; // Add this property
 
     constructor() {
         super("GameScene");
@@ -90,6 +85,23 @@ export class GameScene extends Phaser.Scene {
         window.addEventListener("resize", () => this.resizeGame());
 
         this.startWebSocketConnection();
+
+        // Hook into page unload
+        window.onbeforeunload = () => {
+            this.stopWebSocket();
+            this.shutdown();
+            if (this.game) {
+                this.game.destroy(true, true);
+            }
+        };
+    }
+
+    shutdownAndCleanup() {
+        console.log("Page unloading, initiating full cleanup");
+        this.shutdown();
+        if (this.ws && this.ws.readyState !== WebSocket.CLOSED) {
+            this.ws.close(1000, "Page unload");
+        }
     }
 
     getLocalPlayerID() {
@@ -103,7 +115,7 @@ export class GameScene extends Phaser.Scene {
     startWebSocketConnection() {
         this.ws = new WebSocket("ws://localhost:8080/ws");
         this.ws.onopen = () => {
-            console.log("Connected to server");
+            console.log("WebSocket opened");
             this.isConnected = true;
             this.ws.onmessage = (event) => {
                 const messages = JSON.parse(event.data);
@@ -144,17 +156,26 @@ export class GameScene extends Phaser.Scene {
             };
             this.ws.onerror = (e) => console.error("WebSocket error:", e);
             this.ws.onclose = (event: CloseEvent) => {
-                console.log("WebSocket connection closed");
-                console.log("Close Code:", event.code);
-                console.log("Close Reason:", event.reason);
-                console.log("Was Clean:", event.wasClean);
+                console.log("WebSocket closed:", event.code, event.reason);
                 if (this.playerManager.getLocalPlayerID()) {
                     this.playerManager.removePlayer(
                         this.playerManager.getLocalPlayerID()
                     );
                 }
+                this.shutdownAndCleanup(); // Ensure full cleanup on close
             };
         };
+    }
+
+    stopWebSocket() {
+        if (this.ws) {
+            this.ws.onmessage = null;
+            this.ws.onclose = null;
+            this.ws.onerror = null;
+            if (this.ws.readyState !== WebSocket.CLOSED) {
+                this.ws.close(1000, "Page unload");
+            }
+        }
     }
 
     spawnPlayerCharacter(playableCharacter: PlayableCharacter) {
@@ -404,8 +425,6 @@ export class GameScene extends Phaser.Scene {
                         .setScale(0.5)
                         .setName(playerID);
                     this.playerManager.getPlayers()[playerID] = player;
-                    this.playerManager.getLocalPlayerID() &&
-                        (this.followedPlayerID = "");
                 }
             });
             this.load.start();
@@ -536,6 +555,11 @@ export class GameScene extends Phaser.Scene {
         }
         this.tilemapZones = {};
         window.removeEventListener("resize", () => this.resizeGame());
+        if (this.input.keyboard) {
+            this.input.keyboard.removeAllListeners();
+        }
+        // Kill all tweens
+        this.tweens.killAll();
     }
 
     resizeGame() {

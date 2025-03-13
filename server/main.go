@@ -24,7 +24,7 @@ const (
 	ZoneWidthPixels   = 256 * 32 // Tiles
 	ZoneHeightPixels  = 256 * 32 // Tiles
 	TileSize          = 32       // Pixels
-	NumEnemiesPerZone = 20
+	NumEnemiesPerZone = 100
 	PlayerMoveSpeed   = 6.22 * 32
 )
 
@@ -189,8 +189,8 @@ func NewGameServer() *GameServer {
 			// enemyType = "hard"
 			localX := float32(rand.Intn(ZoneWidthPixels))
 			localY := float32(rand.Intn(ZoneHeightPixels))
-			if localX < 0.55*float32(ZoneWidthPixels) && localX > 0.45*float32(ZoneWidthPixels) &&
-				localY < 0.55*float32(ZoneHeightPixels) && localY > 0.45*float32(ZoneHeightPixels) {
+			if localX < 0.6*float32(ZoneWidthPixels) && localX > 0.4*float32(ZoneWidthPixels) &&
+				localY < 0.6*float32(ZoneHeightPixels) && localY > 0.4*float32(ZoneHeightPixels) {
 				// we don't want enemies in the centre of the zone, make it
 				// a safe area for player to spawn
 				continue
@@ -496,35 +496,6 @@ func (gs *GameServer) processZone(zone *Zone) {
 				log.Printf("Warning: Skipping pending message with empty Type: %v", pendingMsg)
 			}
 		}
-
-		// // Filter messages and send in chunks
-		// const maxMessagesPerChunk = 25 // Adjust based on testing
-		// var batch []Message
-		// for _, msg := range allPendingMessages {
-		// 	if msg.Type == "" {
-		// 		log.Printf("Warning: Skipping message with empty Type: %v", msg)
-		// 		continue
-		// 	}
-		// 	batch = append(batch, msg)
-		// }
-
-		// // Send messages in chunks
-		// for i := 0; i < len(batch); i += maxMessagesPerChunk {
-		// 	end := i + maxMessagesPerChunk
-		// 	if end > len(batch) {
-		// 		end = len(batch)
-		// 	}
-		// 	chunk := batch[i:end]
-
-		// 	// Set a write deadline to avoid blocking
-		// 	conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
-		// 	if err := conn.WriteJSON(chunk); err != nil {
-		// 		log.Printf("Error sending chunk to %s: %v", player.ID, err)
-		// 		player.ToBeRemoved = true
-		// 		conn.Close()
-		// 		break // Stop sending further chunks to this client
-		// 	}
-		// }
 
 		// conn.SetWriteDeadline(time.Now().Add(1 * time.Second))
 		if err := conn.WriteJSON(batch); err != nil {

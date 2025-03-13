@@ -1,12 +1,10 @@
-import { useState, useCallback, useLayoutEffect } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { ethers } from "ethers";
 import {
     fetchAavegotchis,
     Aavegotchi,
     calculateBRS,
 } from "../phaser/FetchGotchis";
-import { Game } from "phaser";
-import { AavegotchiSelectList } from "./AavegotchiSelectList"; // Adjust path as needed
 import "./ConnectWalletButton.css";
 
 interface ConnectWalletButtonProps {
@@ -67,6 +65,15 @@ export function ConnectWalletButton({
             console.error("MetaMask not detected");
         }
     }, [gameRef, onAccountChange]);
+
+    useEffect(() => {
+        return () => {
+            if (gameRef.current) {
+                gameRef.current.registry.set("account", null);
+                gameRef.current.registry.set("gotchis", []);
+            }
+        };
+    }, [gameRef]);
 
     const handleSelectGotchi = useCallback((gotchi: Aavegotchi) => {
         setSelectedGotchi(gotchi);

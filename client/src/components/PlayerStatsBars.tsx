@@ -2,27 +2,11 @@ import { useEffect, useState } from "react";
 import { Game } from "phaser";
 import { Player } from "../phaser/Player";
 
-// interface Player {
-//     hp: number;
-//     maxHp: number;
-//     ap: number;
-//     maxAp: number;
-// }
-
 interface PlayerStatsBarsProps {
     gameRef: React.MutableRefObject<Phaser.Game | null>;
-    gameDimensions: {
-        width: number;
-        height: number;
-        left: number;
-        top: number;
-    };
 }
 
-export function PlayerStatsBars({
-    gameRef,
-    gameDimensions,
-}: PlayerStatsBarsProps) {
+export function PlayerStatsBars({ gameRef }: PlayerStatsBarsProps) {
     const [playerStats, setPlayerStats] = useState<Player | null>(null);
 
     useEffect(() => {

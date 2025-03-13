@@ -5,12 +5,6 @@ import AvatarSelectCard from "./AvatarSelectCard";
 
 interface IntroModalProps {
     onPlay: (playableCharacter: PlayableCharacter) => void;
-    // gameDimensions: {
-    //     width: number;
-    //     height: number;
-    //     left: number;
-    //     top: number;
-    // };
 }
 
 export interface PlayableCharacter {
@@ -73,8 +67,6 @@ export function IntroModal({ onPlay }: IntroModalProps) {
         setSelectedCharacter(playableCharacters[index]);
         console.log("Selected Avatar Index: ", index);
     };
-
-    // console.log(windowHeight);
 
     return (
         <div className="modal-overlay">

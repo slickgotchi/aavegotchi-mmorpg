@@ -294,9 +294,12 @@ export class EnemyManager {
                 this.pools.enemy.body.killAndHide(enemy.bodySprite);
             if (enemy.shadowSprite)
                 this.pools.enemy.shadow.killAndHide(enemy.shadowSprite);
-            if (enemy.flashSprite)
+            if (enemy.flashSprite) {
+                this.scene.tweens.killTweensOf(enemy.flashSprite); // Kill tweens
                 this.pools.enemy.flashSprite.killAndHide(enemy.flashSprite);
+            }
             if (enemy.hpBar) this.pools.enemy.statBar.killAndHide(enemy.hpBar);
+            enemy.positionBuffer = []; // Explicitly clear buffer
             delete this.enemies[enemyId];
         }
     }
