@@ -75,7 +75,6 @@ func InitializeWorld() {
 			maxCols = len(row)
 		}
 	}
-	log.Println(maxCols)
 
 	// copy the tile grid to the zone grid (for column/row assignment only)
 	// World.ZoneGrid = World.TilemapGrid
@@ -106,7 +105,7 @@ func InitializeWorld() {
 			// assign this zone id to the corresponding zone grid
 			World.ZoneGrid[i][j] = zoneID
 
-			log.Println("Set zone: ", zoneID, " to x: ", j, ", y: ", i)
+			// log.Println("Set zone: ", zoneID, " to x: ", j, ", y: ", i)
 		}
 	}
 
@@ -135,16 +134,16 @@ func InitializeWorld() {
 			if newY >= 0 && newY < len(World.ZoneGrid) && newX >= 0 && newX < len(World.ZoneGrid[newY]) {
 				neighborID := World.ZoneGrid[newY][newX]
 				zoneConfig.Neighbors[idx] = neighborID
-				log.Println("zone ", zoneConfig.ID, " has neighbour ", neighborID)
+				// log.Println("zone ", zoneConfig.ID, " has neighbour ", neighborID)
 			} else {
 				zoneConfig.Neighbors[idx] = 0 // Out of bounds, set to null
 			}
 		}
 	}
 
-	for _, zoneConfig := range World.ZoneConfigs {
-		log.Println("ZoneConfig.Neighbours: ", zoneConfig.Neighbors)
-	}
+	// for _, zoneConfig := range World.ZoneConfigs {
+	// 	log.Println("ZoneConfig.Neighbours: ", zoneConfig.Neighbors)
+	// }
 
 	// Validate ZoneGrid entries
 	for i, row := range World.ZoneGrid {

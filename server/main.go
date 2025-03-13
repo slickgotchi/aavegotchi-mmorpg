@@ -24,7 +24,7 @@ const (
 	ZoneWidthPixels   = 256 * 32 // Tiles
 	ZoneHeightPixels  = 256 * 32 // Tiles
 	TileSize          = 32       // Pixels
-	NumEnemiesPerZone = 50
+	NumEnemiesPerZone = 20
 	PlayerMoveSpeed   = 6.22 * 32
 )
 
@@ -42,6 +42,36 @@ func init() {
 	for level := 1; level <= MAX_LEVEL; level++ {
 		totalXpRequiredForLevel[level] = int(float64(BASE_XP_PER_LEVEL) * math.Pow(float64(level-1), XP_GROWTH_FACTOR))
 	}
+}
+
+type ClientManager struct {
+	Clients map[string]*websocket.Conn
+}
+
+func NewClientManager() *ClientManager {
+	return &ClientManager{
+		Clients: make(map[string]*websocket.Conn),
+	}
+}
+
+var clientManager = NewClientManager()
+
+// AddClient stores the connection.
+func (cm *ClientManager) AddClient(sessionID string, conn *websocket.Conn) {
+	log.Println("AddClient(): ", sessionID)
+	cm.Clients[sessionID] = conn
+}
+
+// RemoveClient removes the connection.
+func (cm *ClientManager) RemoveClient(sessionID string) {
+	log.Println("RemoveClient(): ", sessionID)
+	delete(cm.Clients, sessionID)
+}
+
+// GetClient retrieves a player's WebSocket.
+func (cm *ClientManager) GetClient(playerID string) (*websocket.Conn, bool) {
+	conn, exists := cm.Clients[playerID]
+	return conn, exists
 }
 
 // Message is a generic struct for client/server communication
@@ -75,6 +105,7 @@ type ZoneInfo struct {
 // GameServer holds the overall state
 type GameServer struct {
 	Zones map[int]*Zone
+	ClientManager *ClientManager
 }
 
 
@@ -103,8 +134,8 @@ type ActiveZoneList struct {
 }
 
 var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
+	ReadBufferSize:  4096,
+	WriteBufferSize: 4096,
 	CheckOrigin: func(r *http.Request) bool {
 		return r.Header.Get("Origin") == "http://localhost:5173"
 	},
@@ -116,6 +147,7 @@ func NewGameServer() *GameServer {
 
 	gs := &GameServer{
 		Zones: make(map[int]*Zone),
+		ClientManager: clientManager,
 	}
 
 	// Populate zones from world configs
@@ -130,12 +162,12 @@ func NewGameServer() *GameServer {
 			WorldY:     zoneConfig.WorldY,
 			Players:    make(map[string]*Player),
 			Enemies:    make(map[string]*Enemy),
-			Inbound:    make(chan Message, 100),
+			Inbound:    make(chan Message, 1000),
 		}
 
 		gs.Zones[zoneConfig.ID] = zone
 
-		log.Println("Added zone ", zoneConfig.ID, " to gs.Zones. Start populating...")
+		// log.Println("Added zone ", zoneConfig.ID, " to gs.Zones. Start populating...")
 
 		// null/0 zones we don't spawn anything
 		if IsEmptyTilemapGridName(zoneConfig.TilemapRef) {
@@ -157,8 +189,8 @@ func NewGameServer() *GameServer {
 			// enemyType = "hard"
 			localX := float32(rand.Intn(ZoneWidthPixels))
 			localY := float32(rand.Intn(ZoneHeightPixels))
-			if localX < 0.6*float32(ZoneWidthPixels) && localX > 0.4*float32(ZoneWidthPixels) &&
-				localY < 0.6*float32(ZoneHeightPixels) && localY > 0.4*float32(ZoneHeightPixels) {
+			if localX < 0.55*float32(ZoneWidthPixels) && localX > 0.45*float32(ZoneWidthPixels) &&
+				localY < 0.55*float32(ZoneHeightPixels) && localY > 0.45*float32(ZoneHeightPixels) {
 				// we don't want enemies in the centre of the zone, make it
 				// a safe area for player to spawn
 				continue
@@ -188,6 +220,59 @@ func (gs *GameServer) worker(zone *Zone) {
 	for range ticker.C {
 		gs.processZone(zone)
 	}
+}
+
+// handleWebSocket handles client connections
+func (gs *GameServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("WebSocket upgrade failed: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	// Create session ID and store connection
+	sessionID := fmt.Sprintf("session%d", time.Now().UnixNano())
+	gs.ClientManager.AddClient(sessionID, conn)
+
+	// No immediate player creation; wait for spawnPlayerCharacter
+	for {
+		var msg Message
+		if err := conn.ReadJSON(&msg); err != nil {
+			log.Printf("Error reading from %s: %v", sessionID, err)
+			break
+		}
+		msg.PlayerID = sessionID // Use sessionID as playerID for now
+
+		// Forward message to the appropriate zone if player exists
+		zone := gs.getZoneByPlayerID(sessionID)
+		if zone != nil {
+			select {
+			case zone.Inbound <- msg:
+			default:
+				log.Printf("Inbound channel full for Zone %d", zone.ID)
+			}
+		} else {
+			// Handle spawnPlayerCharacter to create player
+			if msg.Type == "spawnPlayerCharacter" {
+				player := gs.CreatePlayer(sessionID, conn)
+				zone := gs.Zones[player.ZoneID]
+				if zone != nil {
+					zone.Players[sessionID] = player
+					select {
+					case zone.Inbound <- msg:
+					default:
+						log.Printf("Inbound channel full for Zone %d", zone.ID)
+					}
+				}
+			}
+		}
+	}
+
+	// Handle disconnect
+	gs.RemovePlayer(sessionID)
+	gs.ClientManager.RemoveClient(sessionID)
+	log.Printf("Session %s disconnected", sessionID)
 }
 
 // getActiveZones calculates the 4 active zones for a player based on position and neighbors
@@ -292,8 +377,6 @@ func (gs *GameServer) getActiveZones(player *Player) ActiveZoneList {
 }
 
 func (gs *GameServer) processZone(zone *Zone) {
-	// we store all messages from function sub-logic in this array
-	// so they can each be individually batched into main message batch later
 	var allPendingMessages []Message
 
 	// Process inbound messages for players
@@ -311,14 +394,18 @@ func (gs *GameServer) processZone(zone *Zone) {
 
 	// Update player positions
 	dt := float32(TickInterval.Seconds())
+	playersToUpdate := make([]*Player, 0, len(zone.Players))
 	for _, player := range zone.Players {
+		playersToUpdate = append(playersToUpdate, player)
+	}
+	for _, player := range playersToUpdate {
 		messages := player.UpdatePlayer(gs, zone, dt)
 		if messages != nil {
 			allPendingMessages = append(allPendingMessages, messages...)
 		}
 	}
 
-	// Update enemies and collect ability messages
+	// Update enemies
 	for enemyID, enemy := range zone.Enemies {
 		messages, keep := enemy.UpdateEnemy(gs, zone)
 		if messages != nil {
@@ -331,16 +418,24 @@ func (gs *GameServer) processZone(zone *Zone) {
 
 	// Prepare and send updates for each player in this zone
 	timestamp := time.Now().UnixMilli()
+	playersToSend := make([]*Player, 0, len(zone.Players))
 	for _, player := range zone.Players {
-		activeZones := gs.getActiveZones(player)
+		playersToSend = append(playersToSend, player)
+	}
+	for _, player := range playersToSend {
+		conn, exists := gs.ClientManager.GetClient(player.ID)
+		if !exists || conn == nil {
+			log.Printf("Connection for player %s is closed, marking for removal", player.ID)
+			player.ToBeRemoved = true
+			continue
+		}
 
-		// add active zones to pending messages
+		activeZones := gs.getActiveZones(player)
 		allPendingMessages = append(allPendingMessages, Message{
 			Type: "activeZones",
 			Data: activeZones,
 		})
 
-		// Collect updates from all 4 active zones
 		activeZoneIDs := []int{activeZones.CurrentZoneID, activeZones.XAxisZoneID, activeZones.YAxisZoneID, activeZones.DiagonalZoneID}
 		for _, zoneID := range activeZoneIDs {
 			if zoneID == 0 {
@@ -361,17 +456,13 @@ func (gs *GameServer) processZone(zone *Zone) {
 						Y:         p.Y,
 						ZoneID:    p.ZoneID,
 						Timestamp: timestamp,
-
-						Species: p.Species,
+						Species:   p.Species,
 						SpeciesID: p.SpeciesID,
-
 						Direction: p.Direction,
-
-						MaxHP: p.Stats.MaxHP,
-						HP:    p.Stats.HP,
-						MaxAP: p.Stats.MaxAP,
-						AP:    p.Stats.AP,
-
+						MaxHP:     p.Stats.MaxHP,
+						HP:        p.Stats.HP,
+						MaxAP:     p.Stats.MaxAP,
+						AP:        p.Stats.AP,
 						GameXP:                  p.GameXP,
 						GameLevel:               p.GameLevel,
 						GameXPOnCurrentLevel:    p.GameXPOnCurrentLevel,
@@ -390,18 +481,15 @@ func (gs *GameServer) processZone(zone *Zone) {
 						Timestamp: timestamp,
 						Type:      e.Type,
 						Direction: e.Direction,
-
-						MaxHP: e.Stats.MaxHP,
-						HP:    e.Stats.HP,
+						MaxHP:     e.Stats.MaxHP,
+						HP:        e.Stats.HP,
 					},
 				})
 			}
 		}
 
-		// Append each message directly to the batch for processing
 		var batch []Message
 		for _, pendingMsg := range allPendingMessages {
-			// Ensure the message has a valid Type (e.g., "abilityEffect", "telegraphWarning")
 			if pendingMsg.Type != "" {
 				batch = append(batch, pendingMsg)
 			} else {
@@ -409,8 +497,46 @@ func (gs *GameServer) processZone(zone *Zone) {
 			}
 		}
 
-		if err := player.Conn.WriteJSON(batch); err != nil {
+		// // Filter messages and send in chunks
+		// const maxMessagesPerChunk = 25 // Adjust based on testing
+		// var batch []Message
+		// for _, msg := range allPendingMessages {
+		// 	if msg.Type == "" {
+		// 		log.Printf("Warning: Skipping message with empty Type: %v", msg)
+		// 		continue
+		// 	}
+		// 	batch = append(batch, msg)
+		// }
+
+		// // Send messages in chunks
+		// for i := 0; i < len(batch); i += maxMessagesPerChunk {
+		// 	end := i + maxMessagesPerChunk
+		// 	if end > len(batch) {
+		// 		end = len(batch)
+		// 	}
+		// 	chunk := batch[i:end]
+
+		// 	// Set a write deadline to avoid blocking
+		// 	conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+		// 	if err := conn.WriteJSON(chunk); err != nil {
+		// 		log.Printf("Error sending chunk to %s: %v", player.ID, err)
+		// 		player.ToBeRemoved = true
+		// 		conn.Close()
+		// 		break // Stop sending further chunks to this client
+		// 	}
+		// }
+
+		// conn.SetWriteDeadline(time.Now().Add(1 * time.Second))
+		if err := conn.WriteJSON(batch); err != nil {
 			log.Printf("Error sending batch to %s: %v", player.ID, err)
+			player.ToBeRemoved = true
+		}
+	}
+
+	// Remove players marked for removal
+	for playerID, player := range zone.Players {
+		if player.ToBeRemoved {
+			gs.RemovePlayer(playerID)
 		}
 	}
 }
@@ -482,83 +608,11 @@ func getZoneConfigByZoneID(zoneId int) (ZoneConfig, error) {
 	return ZoneConfig{}, fmt.Errorf("ZoneConfig not found for zoneId: %d", zoneId)
 }
 
-// handleWebSocket handles client connections
-func (gs *GameServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Printf("WebSocket upgrade failed: %v", err)
-		return
-	}
-	defer conn.Close()
 
-	// Create player
-	playerID := fmt.Sprintf("player%d", time.Now().UnixNano())
-	startX := 1.5 * float32(ZoneWidthPixels)
-	startY := 1.5 * float32(ZoneHeightPixels)
-	player := NewPlayer(playerID, 0, startX, startY, conn)
-	player.ZoneID = gs.calculateZoneID(startX, startY, player)
-
-	initialZone := gs.Zones[player.ZoneID]
-	if initialZone == nil {
-		log.Printf("Error: Initial zone %d not found for player %s", player.ZoneID, playerID)
-		return
-	}
-	initialZone.Players[playerID] = player
-	log.Printf("Player %s spawned in Zone %d (%d,%d)", playerID, initialZone.ID, initialZone.GridX, initialZone.GridY)
-
-
-
-	// Read messages from the client
-	for {
-		var msg Message
-		if err := conn.ReadJSON(&msg); err != nil {
-			log.Printf("Error reading from %s: %v", playerID, err)
-			break
-		}
-		msg.PlayerID = playerID
-		currentZone := gs.getZoneByPlayerID(playerID)
-		if currentZone != nil {
-			select {
-			case currentZone.Inbound <- msg:
-			default:
-				log.Printf("Inbound channel full for Zone %d, dropping input for %s", currentZone.ID, playerID)
-			}
-		} else {
-			log.Printf("Player %s not found in any zone, sending to initial Zone %d", playerID, initialZone.ID)
-			select {
-			case initialZone.Inbound <- msg:
-			default:
-				log.Printf("Inbound channel full for initial Zone %d, dropping input for %s", initialZone.ID, playerID)
-			}
-		}
-	}
-
-	// Remove player on disconnect
-	currentZone := gs.getZoneByPlayerID(playerID)
-	if currentZone != nil {
-		delete(currentZone.Players, playerID)
-	} else {
-		delete(initialZone.Players, playerID)
-	}
-	log.Printf("Player %s disconnected", playerID)
-}
-
-// broadcastMessage sends a message to all players except the excluded player
-// func (gs *GameServer) broadcastMessage(msg Message, excludePlayerID string) {
-// 	for _, zone := range gs.Zones {
-// 		for playerID, player := range zone.Players {
-// 			if playerID == excludePlayerID {
-// 				continue
-// 			}
-// 			if err := player.Conn.WriteJSON([]Message{msg}); err != nil {
-// 				log.Printf("Error broadcasting message to %s: %v", playerID, err)
-// 			}
-// 		}
-// 	}
-// }
 
 func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU()) // Adapt to available cores
+
 	gs := NewGameServer()
 
 	gs.StartWorkers()

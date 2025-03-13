@@ -242,7 +242,7 @@ func (fb *Fireball) Execute(caster Entity, gs *GameServer, zone *Zone) []Message
 			dist := float32(math.Sqrt(float64(dx*dx + dy*dy)))
 			if dist <= fb.Radius {
 				player.GetStats().HP -= fb.Damage
-				log.Printf("Fireball hit %s, HP now %d", player.GetID(), player.GetStats().HP)
+				// log.Printf("Fireball hit %s, HP now %d", player.GetID(), player.GetStats().HP)
 			}
 		}
 	}
@@ -257,7 +257,7 @@ func (fb *Fireball) Execute(caster Entity, gs *GameServer, zone *Zone) []Message
 			dist := float32(math.Sqrt(float64(dx*dx + dy*dy)))
 			if dist <= fb.Radius {
 				enemy.GetStats().HP -= fb.Damage
-				log.Printf("Fireball hit %s, HP now %d", enemy.GetID(), enemy.GetStats().HP)
+				// log.Printf("Fireball hit %s, HP now %d", enemy.GetID(), enemy.GetStats().HP)
 			}
 		}
 	}

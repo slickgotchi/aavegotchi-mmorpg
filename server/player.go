@@ -17,7 +17,6 @@ type Player struct {
 	ZoneID int
 	X, Y   float32 // Tile coordinates
 	VX, VY float32 // Tiles per second
-	Conn   *websocket.Conn
 
 	Species string
 	SpeciesID int
@@ -36,6 +35,8 @@ type Player struct {
 
 	BaseAttackTimerS    float32
 	BaseAttackIntervalS float32
+
+	ToBeRemoved bool
 }
 
 // PlayerUpdate represents player data sent to clients
@@ -101,14 +102,17 @@ func (p *Player) GetSpriteHeightPixels() float32 {
 	return p.SpriteHeightPixels
 }
 
+
+
+
+
 // NewPlayer creates a new player with default stats
-func NewPlayer(id string, zoneID int, x, y float32, conn *websocket.Conn) *Player {
+func NewPlayer(id string, zoneID int, x, y float32) *Player {
 	player := &Player{
 		ID:     id,
 		ZoneID: zoneID,
 		X:      x,
 		Y:      y,
-		Conn:   conn,
 
 		Species: "Duck",
 		SpeciesID: -1,
@@ -132,53 +136,35 @@ func NewPlayer(id string, zoneID int, x, y float32, conn *websocket.Conn) *Playe
 
 		BaseAttackTimerS:    0,
 		BaseAttackIntervalS: 1,
+
+		ToBeRemoved: false,
 	}
 	return player
 }
 
-// removePlayer cleans up and removes a player from the game state
-func (p *Player) removePlayer(gs *GameServer) error {
-	if p.Conn == nil {
-		log.Printf("Player %s has no active connection to remove", p.ID)
-		return nil
-	}
+// Update CreatePlayer to remove Conn parameter (handled by ClientManager)
+func (gs *GameServer) CreatePlayer(playerID string, conn *websocket.Conn) *Player {
+	player := NewPlayer(playerID, 0, 1.5*float32(ZoneWidthPixels), 1.5*float32(ZoneHeightPixels))
+	player.ZoneID = gs.calculateZoneID(player.X, player.Y, player)
 
-	// Get the current zone
-	currentZone, exists := gs.Zones[p.ZoneID]
-	if !exists {
-		log.Printf("Player %s's zone %d not found", p.ID, p.ZoneID)
+	initialZone := gs.Zones[player.ZoneID]
+	if initialZone != nil {
+		initialZone.Players[playerID] = player
+		log.Printf("CreatePlayer(): Player %s spawned in Zone %d", playerID, initialZone.ID)
 	} else {
-		// Remove the player from the current zone's Players map
-		delete(currentZone.Players, p.ID)
-		log.Printf("Player %s removed from zone %d", p.ID, p.ZoneID)
+		log.Printf("Error: Initial zone %d not found for player %s", player.ZoneID, playerID)
 	}
+	return player
+}
 
-	// Offload WebSocket close operation to a goroutine
-	go func(conn *websocket.Conn) {
-		// Set a shorter write deadline
-		if err := conn.SetWriteDeadline(time.Now().Add(500 * time.Millisecond)); err != nil {
-			log.Printf("Error setting write deadline for player %s: %v", p.ID, err)
-			return
+func (gs *GameServer) RemovePlayer(playerID string) {
+	zone := gs.getZoneByPlayerID(playerID)
+	if zone != nil {
+		if _, exists := zone.Players[playerID]; exists {
+			delete(zone.Players, playerID)
+			log.Printf("RemovePlayer(): Player %s deleted from Zone %d", playerID, zone.ID)
 		}
-
-		// Send the WebSocket close message
-		err := conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(3000, "Game Over: HP Depleted"))
-		if err != nil {
-			log.Printf("Error sending close message to player %s: %v", p.ID, err)
-			return
-		}
-
-		// Wait briefly to allow the close message to be sent (optional, can be reduced or removed)
-		time.Sleep(100 * time.Millisecond)
-
-		// Ensure the connection is closed
-		conn.Close()
-	}(p.Conn)
-
-	// Reset the connection reference immediately
-	p.Conn = nil
-
-	return nil
+	}
 }
 
 // HandleInput processes incoming input messages and updates player velocity or performs other actions
@@ -230,9 +216,9 @@ func (p *Player) HandleInput(msg Message, gs *GameServer, zone *Zone) []Message 
 			// Execute HammerSwing ability
 			messages = append(messages, ExecuteAbility(p, "HammerSwing", gs, zone)...)
 		}
-
-	case "selectCharacter":
-		// Handle selectCharacter message
+		break
+	case "spawnPlayerCharacter":
+		// Handle player spawning message
 		data, ok := msg.Data.(map[string]interface{})
 		if !ok {
 			log.Printf("Invalid selectCharacter message data for player %s: expected map", p.ID)
@@ -254,11 +240,13 @@ func (p *Player) HandleInput(msg Message, gs *GameServer, zone *Zone) []Message 
 			return messages
 		}
 
-		log.Println(character)
-
 		// assign species and id
 		p.Species = character.Species
 		p.SpeciesID = character.SpeciesID
+
+		// move the player to spawn location
+		p.X = 1.5 * float32(ZoneWidthPixels)
+		p.Y = 1.5 * float32(ZoneHeightPixels)
 
 		// Prepare welcome message with world zones
 		zonesInfo := make([]ZoneInfo, 0, len(gs.Zones))
@@ -285,11 +273,14 @@ func (p *Player) HandleInput(msg Message, gs *GameServer, zone *Zone) []Message 
 				"zones":    zonesInfo,
 			}},
 		}
-		if err := p.Conn.WriteJSON(batch); err != nil {
-			log.Printf("Error sending welcome message to %s: %v", p.ID, err)
+		conn, exists := gs.ClientManager.GetClient(p.ID)
+		if exists && conn != nil {
+			if err := conn.WriteJSON(batch); err != nil {
+				log.Printf("Error sending welcome message to %s: %v", p.ID, err)
+			}
 		}
 
-
+		break
 	default:
 		log.Printf("Unhandled message type for player %s: %s", p.ID, msg.Type)
 	}
@@ -297,15 +288,10 @@ func (p *Player) HandleInput(msg Message, gs *GameServer, zone *Zone) []Message 
 	return messages
 }
 
-func SpawnPlayerFromCharacterSelect() {
-
-}
-
-
 // UpdatePlayer updates the player's position, handles zone switching & general ability handling
 func (p *Player) UpdatePlayer(gs *GameServer, zone *Zone, dt float32) []Message {
 	var messages []Message
-
+	
 	p.X += p.VX * dt
 	p.Y += p.VY * dt
 	newZoneID := gs.calculateZoneID(p.X, p.Y, p)
@@ -340,8 +326,11 @@ func (p *Player) UpdatePlayer(gs *GameServer, zone *Zone, dt float32) []Message 
 		batch := []Message{
 			{Type: "playerUpdates", Data: lastZoneUpdates},
 		}
-		if err := p.Conn.WriteJSON(batch); err != nil {
-			log.Printf("Error sending batch to %s: %v", p.ID, err)
+		conn, exists := gs.ClientManager.GetClient(p.ID)
+		if exists && conn != nil {
+			if err := conn.WriteJSON(batch); err != nil {
+				log.Printf("Error sending batch to %s: %v", p.ID, err)
+			}
 		}
 
 		gs.switchZone(p, zone, newZoneID)
@@ -360,11 +349,9 @@ func (p *Player) UpdatePlayer(gs *GameServer, zone *Zone, dt float32) []Message 
 
 	}
 
-	// check for player death
+	// check for player death (we set isspawned to false)
 	if p.Stats.HP <= 0 {
-		if err := p.removePlayer(gs); err != nil {
-			log.Printf("Error removing player %s: %v", p.ID, err)
-		}
+		p.HandleDeath(gs)
 	}
 
 	return messages
@@ -421,6 +408,52 @@ func fetchGotchiStats(gotchiId string) (int, error) {
 	return brs, nil
 }
 
+// Update HandleDeath to tag for removal
+func (p *Player) HandleDeath(gs *GameServer) {
+	if p.ToBeRemoved {
+		return
+	}
+	log.Printf("HandleDeath(): Player %s died.", p.ID)
+
+	// tag player as to be removed
+	p.ToBeRemoved = true
+
+	// send playerDeath message to client
+	conn, exists := gs.ClientManager.GetClient(p.ID)
+	if exists {
+		if err := conn.WriteJSON([]Message{{
+			Type: "playerDeath",
+			Data: map[string]interface{}{
+				"respawnTime": 10,
+			}},
+		}); err != nil {
+			log.Printf("Error sending death message to %s: %v", p.ID, err)
+		}
+	}
+}
+
+// Update RespawnPlayer to recreate player
+func (gs *GameServer) RespawnPlayer(playerID string) {
+	conn, exists := gs.ClientManager.GetClient(playerID)
+	if !exists {
+		log.Printf("Cannot respawn player %s: no active connection.", playerID)
+		return
+	}
+
+	player := gs.CreatePlayer(playerID, conn)
+
+	conn.WriteJSON(Message{
+		Type: "playerRespawn",
+		Data: map[string]interface{}{
+			"zoneId": player.ZoneID,
+			"x":      player.X,
+			"y":      player.Y,
+		},
+	})
+}
+
+
+
 // calculatePlayerStats calculates player stats based on BRS
 func calculatePlayerStats(brs int) (hp, atk, ap int, rgn, speed float32) {
 	hp = brs
@@ -432,7 +465,7 @@ func calculatePlayerStats(brs int) (hp, atk, ap int, rgn, speed float32) {
 }
 
 // addPlayerXP adds XP to a player and handles leveling up
-func addPlayerXP(p *Player, amount int) {
+func addPlayerXP(p *Player, amount int, gs *GameServer) {
 	p.GameXP += amount
 
 	totalXpRequiredForCurrentLevel := totalXpRequiredForLevel[p.GameLevel]
@@ -448,7 +481,7 @@ func addPlayerXP(p *Player, amount int) {
 		p.GameXPOnCurrentLevel = p.GameXP - totalXpRequiredForCurrentLevel
 		p.GameXPTotalForNextLevel = totalXpRequiredForNextLevel - totalXpRequiredForCurrentLevel
 
-		levelUpMsg := Message{
+		levelUpMsg := []Message{{
 			Type: "levelUp",
 			Data: struct {
 				NewLevel                int `json:"newLevel"`
@@ -460,10 +493,13 @@ func addPlayerXP(p *Player, amount int) {
 				NewATK:                  p.Stats.ATK,
 				GameXPOnCurrentLevel:    p.GameXPOnCurrentLevel,
 				GameXPTotalForNextLevel: p.GameXPTotalForNextLevel,
-			},
+			}},
 		}
-		if err := p.Conn.WriteJSON(levelUpMsg); err != nil {
-			log.Println("Failed to send level-up message to", p.ID, ":", err)
+		conn, exists := gs.ClientManager.GetClient(p.ID)
+		if exists && conn != nil {
+			if err := conn.WriteJSON(levelUpMsg); err != nil {
+				log.Println("Failed to send level-up message to", p.ID, ":", err)
+			}
 		}
 	}
 }

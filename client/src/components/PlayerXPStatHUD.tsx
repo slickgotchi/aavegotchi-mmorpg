@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
-import { Game } from 'phaser';
-import { Player } from '../phaser/GameScene';
-import './PlayerXPStatHUD.css';
+import { useEffect, useState } from "react";
+import { Game } from "phaser";
+import { Player } from "../phaser/Player";
+import "./PlayerXPStatHUD.css";
 
 interface PlayerXPStatsProps {
     gameRef: React.MutableRefObject<Phaser.Game | null>;
@@ -11,10 +11,19 @@ interface PlayerXPStatsProps {
         gameXpOnCurrentLevel: number;
         gameXpTotalForNextLevel: number;
     } | null;
-    gameDimensions: { width: number; height: number; left: number; top: number };
+    gameDimensions: {
+        width: number;
+        height: number;
+        left: number;
+        top: number;
+    };
 }
 
-export function PlayerXPStatsHUD({ gameRef, levelUpData, gameDimensions }: PlayerXPStatsProps) {
+export function PlayerXPStatsHUD({
+    gameRef,
+    levelUpData,
+    gameDimensions,
+}: PlayerXPStatsProps) {
     const [playerXPStats, setPlayerXPStats] = useState<Player | null>(null);
     const [isFlashing, setIsFlashing] = useState(false); // State to trigger flash animation
     const [animationKey, setAnimationKey] = useState(0); // Unique key for animation to prevent re-triggering
@@ -22,8 +31,14 @@ export function PlayerXPStatsHUD({ gameRef, levelUpData, gameDimensions }: Playe
     useEffect(() => {
         const updateStats = () => {
             if (gameRef.current) {
-                const gameScene = gameRef.current.scene.getScene('GameScene') as any;
-                if (gameScene && gameScene.getPlayers && gameScene.getLocalPlayerID) {
+                const gameScene = gameRef.current.scene.getScene(
+                    "GameScene"
+                ) as any;
+                if (
+                    gameScene &&
+                    gameScene.getPlayers &&
+                    gameScene.getLocalPlayerID
+                ) {
                     const players = gameScene.getPlayers();
                     const localPlayerId = gameScene.getLocalPlayerID();
                     if (players && localPlayerId && players[localPlayerId]) {
@@ -44,7 +59,7 @@ export function PlayerXPStatsHUD({ gameRef, levelUpData, gameDimensions }: Playe
         if (levelUpData) {
             console.log("Level Up! Triggering border flash");
             setIsFlashing(true);
-            setAnimationKey(prev => prev + 1); // Increment animation key to ensure unique animation
+            setAnimationKey((prev) => prev + 1); // Increment animation key to ensure unique animation
             const timer = setTimeout(() => {
                 console.log("Border flash reset");
                 setIsFlashing(false);
@@ -58,13 +73,13 @@ export function PlayerXPStatsHUD({ gameRef, levelUpData, gameDimensions }: Playe
 
     const xpFillBarWidth = 300; // Base width for visual consistency
     const xpFillBarHeight = 16;
-    const xpBgBarWidth = xpFillBarWidth + 2*barPadding;  // Static width for HP background
-    const xpBgBarHeight = xpFillBarHeight + 2*barPadding;
+    const xpBgBarWidth = xpFillBarWidth + 2 * barPadding; // Static width for HP background
+    const xpBgBarHeight = xpFillBarHeight + 2 * barPadding;
 
     const levelFillBarWidth = 32; // Base width for visual consistency
     const levelFillBarHeight = 24;
-    const levelBgBarWidth = levelFillBarWidth + 2*barPadding;  // Static width for HP background
-    const levelBgBarHeight = levelFillBarHeight + 2*barPadding;
+    const levelBgBarWidth = levelFillBarWidth + 2 * barPadding; // Static width for HP background
+    const levelBgBarHeight = levelFillBarHeight + 2 * barPadding;
 
     const margin = 8;
 
@@ -85,49 +100,45 @@ export function PlayerXPStatsHUD({ gameRef, levelUpData, gameDimensions }: Playe
     return (
         <div
             style={{
-                position: 'absolute',
+                position: "absolute",
                 left: `${margin}px`,
                 top: `${margin}px`,
                 zIndex: 2000,
-                fontFamily: 'Pixelar',
+                fontFamily: "Pixelar",
             }}
         >
             <div
-
                 style={{
-                    position: 'absolute',
+                    position: "absolute",
                     width: `${levelBgBarWidth}px`, // 2px extra on each side
                     height: `${levelBgBarHeight}px`, // 2px extra above and below
                     top: 0,
                     left: 0,
-
-
                 }}
             >
                 {/* Background Rectangle */}
                 <div
                     key={`level-${animationKey}`} // Unique key to prevent animation re-triggering
-                    className={isFlashing ? 'flash-border' : ''}
+                    className={isFlashing ? "flash-border" : ""}
                     style={{
-                        position: 'absolute',
+                        position: "absolute",
                         top: 0, // Offset to extend beyond colored bar
                         left: 0,
 
-                        width: '100%',
-                        height: '100%',
-                        backgroundColor: '#333333', // Dark grey, you can use 'black' if preferred
+                        width: "100%",
+                        height: "100%",
+                        backgroundColor: "#333333", // Dark grey, you can use 'black' if preferred
 
-                    boxSizing: 'border-box',
-
+                        boxSizing: "border-box",
                     }}
                 />
                 {/* Number Box */}
                 <div
                     style={{
-                        position: 'absolute',
+                        position: "absolute",
                         width: `${levelFillBarWidth}px`,
                         height: `${levelFillBarHeight}px`,
-                        backgroundColor: '#ffc825',
+                        backgroundColor: "#ffc825",
                         top: barPadding,
                         left: barPadding,
                     }}
@@ -135,10 +146,10 @@ export function PlayerXPStatsHUD({ gameRef, levelUpData, gameDimensions }: Playe
                 {/* Number Box Highlight*/}
                 <div
                     style={{
-                        position: 'absolute',
+                        position: "absolute",
                         width: `${levelFillBarWidth}px`,
-                        height: `${levelFillBarHeight*.1}px`,
-                        backgroundColor: '#ffeb57',
+                        height: `${levelFillBarHeight * 0.1}px`,
+                        backgroundColor: "#ffeb57",
                         top: barPadding,
                         left: barPadding,
                     }}
@@ -146,10 +157,10 @@ export function PlayerXPStatsHUD({ gameRef, levelUpData, gameDimensions }: Playe
                 {/* Number Box Lowlight*/}
                 <div
                     style={{
-                        position: 'absolute',
+                        position: "absolute",
                         width: `${levelFillBarWidth}px`,
-                        height: `${levelFillBarHeight*.1}px`,
-                        backgroundColor: '#ffa214',
+                        height: `${levelFillBarHeight * 0.1}px`,
+                        backgroundColor: "#ffa214",
                         bottom: barPadding,
                         left: barPadding,
                     }}
@@ -157,16 +168,16 @@ export function PlayerXPStatsHUD({ gameRef, levelUpData, gameDimensions }: Playe
                 {/* Text */}
                 <span
                     style={{
-                        position: 'absolute',
-                        top: `${levelBgBarHeight*0.15}px`,
+                        position: "absolute",
+                        top: `${levelBgBarHeight * 0.15}px`,
                         left: 0,
 
-                        width: '100%',
-                        height: '100%',
+                        width: "100%",
+                        height: "100%",
 
-                        color: 'white',
-                        fontSize: `${levelBgBarHeight*0.7}px`,
-                        fontFamily: 'Pixelar', // Ensure it's properly loaded
+                        color: "white",
+                        fontSize: `${levelBgBarHeight * 0.7}px`,
+                        fontFamily: "Pixelar", // Ensure it's properly loaded
 
                         textShadow: textShadow, // Outline effect
                     }}
@@ -177,42 +188,42 @@ export function PlayerXPStatsHUD({ gameRef, levelUpData, gameDimensions }: Playe
 
             {/* XP Bar and Text */}
             <div
-
                 style={{
-                    position: 'absolute',
-                    top: levelBgBarHeight/2 - xpBgBarHeight/2,
-                    left: levelBgBarWidth-barPadding,
+                    position: "absolute",
+                    top: levelBgBarHeight / 2 - xpBgBarHeight / 2,
+                    left: levelBgBarWidth - barPadding,
                     width: `${xpBgBarWidth}px`, // 2px extra on each side
                     height: `${xpBgBarHeight}px`, // 2px extra above and below
-
-
                 }}
             >
                 {/* Background Rectangle */}
                 <div
                     key={`level-${animationKey}`} // Unique key to prevent animation re-triggering
-                    className={isFlashing ? 'flash-border' : ''}
+                    className={isFlashing ? "flash-border" : ""}
                     style={{
-                        position: 'absolute',
+                        position: "absolute",
                         width: `${xpBgBarWidth}px`,
                         height: `${xpBgBarHeight}px`,
                         // backgroundColor: isFlashing ? "#ffffff" : '#333333', // Dark grey
                         backgroundColor: "#333333",
                         top: 0,
                         left: 0,
-                        
-                    boxSizing: 'border-box'
 
+                        boxSizing: "border-box",
                     }}
                 />
                 {/* XP fill Bar */}
                 <div
                     style={{
-                        position: 'absolute',
-                        width: `${xpFillBarWidth * (playerXPStats.gameXpOnCurrentLevel / playerXPStats.gameXpTotalForNextLevel)}px`,
+                        position: "absolute",
+                        width: `${
+                            xpFillBarWidth *
+                            (playerXPStats.gameXpOnCurrentLevel /
+                                playerXPStats.gameXpTotalForNextLevel)
+                        }px`,
                         height: `${xpFillBarHeight}px`,
-                        backgroundColor: '#ffc825',
-                        transition: 'width 0.2s',
+                        backgroundColor: "#ffc825",
+                        transition: "width 0.2s",
                         top: barPadding,
                         left: barPadding,
                     }}
@@ -220,11 +231,15 @@ export function PlayerXPStatsHUD({ gameRef, levelUpData, gameDimensions }: Playe
                 {/* XP fill Bar Highlight */}
                 <div
                     style={{
-                        position: 'absolute',
-                        width: `${xpFillBarWidth * (playerXPStats.gameXpOnCurrentLevel / playerXPStats.gameXpTotalForNextLevel)}px`,
-                        height: `${xpFillBarHeight*.1}px`,
-                        backgroundColor: '#ffeb57',
-                        transition: 'width 0.2s',
+                        position: "absolute",
+                        width: `${
+                            xpFillBarWidth *
+                            (playerXPStats.gameXpOnCurrentLevel /
+                                playerXPStats.gameXpTotalForNextLevel)
+                        }px`,
+                        height: `${xpFillBarHeight * 0.1}px`,
+                        backgroundColor: "#ffeb57",
+                        transition: "width 0.2s",
                         top: barPadding,
                         left: barPadding,
                     }}
@@ -232,11 +247,15 @@ export function PlayerXPStatsHUD({ gameRef, levelUpData, gameDimensions }: Playe
                 {/* XP fill Bar Lowlight */}
                 <div
                     style={{
-                        position: 'absolute',
-                        width: `${xpFillBarWidth * (playerXPStats.gameXpOnCurrentLevel / playerXPStats.gameXpTotalForNextLevel)}px`,
-                        height: `${xpFillBarHeight*.1}px`,
-                        backgroundColor: '#ffa214',
-                        transition: 'width 0.2s',
+                        position: "absolute",
+                        width: `${
+                            xpFillBarWidth *
+                            (playerXPStats.gameXpOnCurrentLevel /
+                                playerXPStats.gameXpTotalForNextLevel)
+                        }px`,
+                        height: `${xpFillBarHeight * 0.1}px`,
+                        backgroundColor: "#ffa214",
+                        transition: "width 0.2s",
                         bottom: barPadding,
                         left: barPadding,
                     }}
@@ -244,21 +263,22 @@ export function PlayerXPStatsHUD({ gameRef, levelUpData, gameDimensions }: Playe
                 {/* Text */}
                 <span
                     style={{
-                        position: 'absolute',
+                        position: "absolute",
                         top: barPadding,
                         left: barPadding,
 
                         width: `${xpBgBarWidth}px`,
                         height: `${xpBgBarHeight}px`,
 
-                        color: 'white',
+                        color: "white",
                         fontSize: `${xpFillBarHeight}px`,
-                        fontFamily: 'Pixelar', // Ensure it's properly loaded
+                        fontFamily: "Pixelar", // Ensure it's properly loaded
 
                         textShadow: textShadow, // Outline effect
                     }}
                 >
-                    {Math.floor(playerXPStats.gameXpOnCurrentLevel)} / {playerXPStats.gameXpTotalForNextLevel}
+                    {Math.floor(playerXPStats.gameXpOnCurrentLevel)} /{" "}
+                    {playerXPStats.gameXpTotalForNextLevel}
                 </span>
             </div>
         </div>

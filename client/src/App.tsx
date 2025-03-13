@@ -153,8 +153,10 @@ function App() {
             | undefined;
         if (scene) {
             // connect to the websocket
-            const ws = new WebSocket("ws://localhost:8080/ws");
-            scene.startWebSocketConnection(ws, playableCharacter);
+            // const ws = new WebSocket("ws://localhost:8080/ws");
+            // scene.startWebSocketConnection(ws, playableCharacter);
+            console.log("spawnPlayerCharacter");
+            scene.spawnPlayerCharacter(playableCharacter);
         }
     };
 

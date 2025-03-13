@@ -308,7 +308,7 @@ func (e *Enemy) UpdateEnemy(gs *GameServer, zone *Zone) ([]Message, bool) {
 					case "hard":
 						xpAward = 50
 					}
-					addPlayerXP(player, xpAward)
+					addPlayerXP(player, xpAward, gs)
 				}
 			}
 			return messages, false // Remove enemy
@@ -343,7 +343,7 @@ func (e *Enemy) UpdateEnemy(gs *GameServer, zone *Zone) ([]Message, bool) {
 
 // findNearestPlayer finds the nearest player to the enemy
 func (e *Enemy) findNearestPlayer(zone *Zone) (*Player, float32) {
-	var nearestPlayer *Player
+	var nearestPlayer *Player = nil
 	var minDistSq float32 = math.MaxFloat32
 
 	for _, player := range zone.Players {

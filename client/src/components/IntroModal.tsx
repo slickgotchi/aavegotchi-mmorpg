@@ -64,7 +64,7 @@ export function IntroModal({ onPlay }: IntroModalProps) {
 
     const handlePlay = useCallback(() => {
         if (!selectedCharacter) return;
-
+        console.log("handlePlay");
         onPlay(selectedCharacter);
     }, [selectedCharacter, onPlay]);
 
